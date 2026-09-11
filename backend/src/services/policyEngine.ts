@@ -3,14 +3,14 @@ import type { Host, Container, ServiceRecord, Policy, PolicyCondition, PolicyVio
 
 type Evaluatable = Record<string, unknown>;
 
-function getField(obj: Evaluatable, path: string): unknown {
+export function getField(obj: Evaluatable, path: string): unknown {
   return path.split('.').reduce<unknown>((acc, key) => {
     if (acc === null || acc === undefined) return undefined;
     return (acc as Record<string, unknown>)[key];
   }, obj);
 }
 
-function evalCondition(target: Evaluatable, cond: PolicyCondition): boolean {
+export function evalCondition(target: Evaluatable, cond: PolicyCondition): boolean {
   const actual = getField(target, cond.field);
   switch (cond.operator) {
     case 'eq':
@@ -36,7 +36,7 @@ function evalCondition(target: Evaluatable, cond: PolicyCondition): boolean {
   }
 }
 
-function matchesPolicy(target: Evaluatable, policy: Policy): boolean {
+export function matchesPolicy(target: Evaluatable, policy: Policy): boolean {
   const { all, any } = policy.conditions;
   const allOk = !all || all.every((c) => evalCondition(target, c));
   const anyOk = !any || any.length === 0 || any.some((c) => evalCondition(target, c));
