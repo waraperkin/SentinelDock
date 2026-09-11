@@ -1,0 +1,19 @@
+key: cloud-metadata-reachable
+name: Cloud instance metadata endpoint reachable
+description: >
+  The cloud provider instance metadata service (169.254.169.254 or
+  metadata.google.internal) is reachable from this asset. Combined with an
+  SSRF vulnerability in any application on this asset, this is a direct
+  path to stealing the instance's IAM credentials (see the 2019 Capital
+  One breach).
+severity: critical
+recommendation: >
+  Enforce IMDSv2 (AWS) or equivalent token-bound metadata access, and add
+  network-layer or WAF rules blocking application requests to the
+  metadata IP range unless explicitly required.
+conditions:
+  target: service
+  all:
+    - field: protocol_family
+      operator: eq
+      value: cloud-metadata

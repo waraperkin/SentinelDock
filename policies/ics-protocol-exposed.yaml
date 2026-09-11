@@ -1,0 +1,30 @@
+key: ics-protocol-exposed
+name: Industrial control protocol reachable
+description: >
+  Modbus, S7comm, OPC-UA, or BACnet confirmed reachable and publicly
+  exposed. These protocols were designed for isolated OT networks and
+  typically have no authentication — reachability alone is a critical
+  finding.
+severity: critical
+recommendation: >
+  Isolate ICS/OT protocols on a dedicated, firewalled OT segment with no
+  direct route from IT or the internet. Never expose these ports publicly.
+conditions:
+  target: service
+  all:
+    - field: exposed_publicly
+      operator: eq
+      value: true
+  any:
+    - field: protocol_family
+      operator: eq
+      value: modbus
+    - field: protocol_family
+      operator: eq
+      value: s7
+    - field: protocol_family
+      operator: eq
+      value: opcua
+    - field: protocol_family
+      operator: eq
+      value: bacnet

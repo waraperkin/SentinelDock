@@ -1,0 +1,23 @@
+key: iam-privileged-role-exposed
+name: High-criticality asset with reachable cloud metadata
+description: >
+  A high or critical-criticality asset can reach the cloud instance
+  metadata service. SentinelDock does not call cloud provider IAM APIs
+  (no live IAM policy introspection) — this rule flags the combination of
+  "sensitive asset" + "can reach metadata" as a proxy signal that the
+  attached instance role's actual permissions should be manually reviewed
+  for least-privilege.
+severity: high
+recommendation: >
+  Review the IAM role/service account attached to this instance and
+  confirm it follows least-privilege — an overly broad role reachable via
+  SSRF is a direct path to full account compromise.
+conditions:
+  target: host
+  all:
+    - field: device_class
+      operator: eq
+      value: cloud
+    - field: criticality
+      operator: in
+      value: [high, critical]

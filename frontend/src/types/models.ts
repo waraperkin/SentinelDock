@@ -9,6 +9,7 @@ export interface Host {
   role: string;
   network_segment_id?: string | null;
   criticality: Severity;
+  device_class: 'it' | 'ics' | 'cloud';
   last_seen?: string | null;
 }
 
@@ -35,6 +36,7 @@ export interface ServiceRecord {
   exposed_publicly: boolean;
   cve_ids: string[];
   cvss_score?: number | null;
+  protocol_family?: string | null;
 }
 
 export interface NetworkSegment {
@@ -83,9 +85,20 @@ export interface AttackPath {
   entry_asset_id: string;
   target_asset_type: string;
   target_asset_id: string;
-  hops: Array<{ asset_type: string; asset_id: string; via: string }>;
+  hops: Array<{ asset_type: string; asset_id: string; via: string; technique?: string }>;
   blast_radius: number;
   severity: Severity;
+}
+
+export interface SecretFinding {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  kind: string;
+  match_preview: string;
+  source: string;
+  severity: Severity;
+  detected_at: string;
 }
 
 export interface AttackPathGraph {

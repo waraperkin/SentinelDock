@@ -1,0 +1,20 @@
+key: critical-host-flat-network
+name: Critical host on an unsegmented (management-less) network
+description: >
+  A critical-criticality host sits on a segment with no dedicated
+  management zone isolation ("flat network") — any compromise elsewhere
+  on the same broadcast domain can reach it directly.
+severity: high
+recommendation: >
+  Move critical hosts to a dedicated management/restricted segment (VLAN)
+  with explicit firewall rules, rather than sharing a general internal
+  segment with everything else.
+conditions:
+  target: host
+  all:
+    - field: criticality
+      operator: eq
+      value: critical
+    - field: network_segment.zone
+      operator: eq
+      value: internal

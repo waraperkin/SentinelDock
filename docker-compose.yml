@@ -51,11 +51,14 @@ services:
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-60000}
       WORKER_HOSTNAME_OVERRIDE: ${WORKER_HOSTNAME_OVERRIDE:-sentineldock-worker}
       WORKER_SCAN_SUBNETS: ${WORKER_SCAN_SUBNETS:-}
+      REDIS_URL: redis://redis:6379
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       backend:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   frontend:
     build:

@@ -39,17 +39,35 @@ export async function assetRoutes(app: FastifyInstance) {
       const row = await queryOne(
         `UPDATE hosts SET os = COALESCE($1, os), os_version = COALESCE($2, os_version), ip_address = COALESCE($3, ip_address),
           role = COALESCE($4, role), criticality = COALESCE($5, criticality), network_segment_id = COALESCE($6, network_segment_id),
-          last_seen = now(), updated_at = now()
-         WHERE id = $7 RETURNING *`,
-        [b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? null, b.criticality ?? null, b.network_segment_id ?? null, existing.id],
+          device_class = COALESCE($7, device_class), last_seen = now(), updated_at = now()
+         WHERE id = $8 RETURNING *`,
+        [
+          b.os ?? null,
+          b.os_version ?? null,
+          b.ip_address ?? null,
+          b.role ?? null,
+          b.criticality ?? null,
+          b.network_segment_id ?? null,
+          b.device_class ?? null,
+          existing.id,
+        ],
       );
       if (row?.network_segment_id) await ensureDependency('host', row.id, 'network', row.network_segment_id, 'member_of');
       return reply.code(200).send(row);
     }
     const row = await queryOne(
-      `INSERT INTO hosts (hostname, os, os_version, ip_address, role, network_segment_id, criticality, last_seen)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, now()) RETURNING *`,
-      [b.hostname, b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? 'generic', b.network_segment_id ?? null, b.criticality ?? 'medium'],
+      `INSERT INTO hosts (hostname, os, os_version, ip_address, role, network_segment_id, criticality, device_class, last_seen)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now()) RETURNING *`,
+      [
+        b.hostname,
+        b.os ?? null,
+        b.os_version ?? null,
+        b.ip_address ?? null,
+        b.role ?? 'generic',
+        b.network_segment_id ?? null,
+        b.criticality ?? 'medium',
+        b.device_class ?? 'it',
+      ],
     );
     if (row?.network_segment_id) await ensureDependency('host', row.id, 'network', row.network_segment_id, 'member_of');
     return reply.code(201).send(row);
@@ -61,8 +79,8 @@ export async function assetRoutes(app: FastifyInstance) {
     const row = await queryOne(
       `UPDATE hosts SET hostname = COALESCE($1, hostname), os = COALESCE($2, os), os_version = COALESCE($3, os_version),
         ip_address = COALESCE($4, ip_address), role = COALESCE($5, role), criticality = COALESCE($6, criticality),
-        last_seen = now(), updated_at = now() WHERE id = $7 RETURNING *`,
-      [b.hostname ?? null, b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? null, b.criticality ?? null, id],
+        device_class = COALESCE($7, device_class), last_seen = now(), updated_at = now() WHERE id = $8 RETURNING *`,
+      [b.hostname ?? null, b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? null, b.criticality ?? null, b.device_class ?? null, id],
     );
     if (!row) return reply.code(404).send({ error: 'not_found' });
     return row;
@@ -121,16 +139,26 @@ export async function assetRoutes(app: FastifyInstance) {
     );
     if (existing) {
       const row = await queryOne(
-        `UPDATE services SET name = $1, protocol = $2, bind_address = $3, banner = $4, version = $5, exposed_publicly = $6, updated_at = now()
-         WHERE id = $7 RETURNING *`,
-        [b.name, b.protocol ?? 'tcp', b.bind_address ?? '0.0.0.0', b.banner ?? null, b.version ?? null, b.exposed_publicly ?? false, existing.id],
+        `UPDATE services SET name = $1, protocol = $2, bind_address = $3, banner = $4, version = $5, exposed_publicly = $6,
+          protocol_family = COALESCE($7, protocol_family), updated_at = now()
+         WHERE id = $8 RETURNING *`,
+        [
+          b.name,
+          b.protocol ?? 'tcp',
+          b.bind_address ?? '0.0.0.0',
+          b.banner ?? null,
+          b.version ?? null,
+          b.exposed_publicly ?? false,
+          b.protocol_family ?? null,
+          existing.id,
+        ],
       );
       await linkServiceDependencies(row);
       return reply.code(200).send(row);
     }
     const row = await queryOne(
-      `INSERT INTO services (host_id, container_id, name, port, protocol, bind_address, banner, version, exposed_publicly)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO services (host_id, container_id, name, port, protocol, bind_address, banner, version, exposed_publicly, protocol_family)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         b.host_id ?? null,
         b.container_id ?? null,
@@ -141,6 +169,7 @@ export async function assetRoutes(app: FastifyInstance) {
         b.banner ?? null,
         b.version ?? null,
         b.exposed_publicly ?? false,
+        b.protocol_family ?? null,
       ],
     );
     await linkServiceDependencies(row);

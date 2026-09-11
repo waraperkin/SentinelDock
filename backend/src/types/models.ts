@@ -20,6 +20,7 @@ export interface Host {
   role: string;
   network_segment_id?: string | null;
   criticality: Criticality;
+  device_class: 'it' | 'ics' | 'cloud';
   last_seen?: string | null;
   created_at: string;
   updated_at: string;
@@ -57,6 +58,7 @@ export interface ServiceRecord {
   exposed_publicly: boolean;
   cve_ids: string[];
   cvss_score?: number | null;
+  protocol_family?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -122,7 +124,18 @@ export interface Risk {
   id: string;
   asset_type: AssetType;
   asset_id: string;
-  category: 'exposure' | 'misconfiguration' | 'segmentation' | 'patching' | 'vulnerability' | 'network' | 'container' | 'host';
+  category:
+    | 'exposure'
+    | 'misconfiguration'
+    | 'segmentation'
+    | 'patching'
+    | 'vulnerability'
+    | 'network'
+    | 'container'
+    | 'host'
+    | 'ics'
+    | 'cloud'
+    | 'secrets';
   severity: Severity;
   score: number;
   summary: string;
@@ -135,6 +148,19 @@ export interface AttackPathHop {
   asset_type: AssetType;
   asset_id: string;
   via: string;
+  /** MITRE ATT&CK-flavored tactic:technique label for this hop, e.g. "Lateral Movement (TA0008): Remote Services (T1021)". */
+  technique?: string;
+}
+
+export interface SecretFinding {
+  id: string;
+  asset_type: AssetType;
+  asset_id: string;
+  kind: 'aws_access_key' | 'private_key' | 'generic_api_key' | 'generic_password';
+  match_preview: string;
+  source: string;
+  severity: Severity;
+  detected_at: string;
 }
 
 export interface AttackPath {

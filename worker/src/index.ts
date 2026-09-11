@@ -1,12 +1,19 @@
 import { collectHost } from './collectors/hostCollector.js';
 import { collectNetworkInterfaces, collectRoutes, deriveSubnets } from './collectors/networkCollector.js';
-import { collectContainers } from './collectors/dockerCollector.js';
+import { collectContainers, collectContainerEnv } from './collectors/dockerCollector.js';
 import { collectServices } from './collectors/serviceCollector.js';
 import { scanSubnet, type DiscoveredDevice } from './collectors/subnetScanner.js';
+import { scanIcsProtocols } from './collectors/icsScanner.js';
+import { scanCloudMetadata } from './collectors/cloudMetadataScanner.js';
+import { readArpTable } from './collectors/arpScanner.js';
+import { scanTextForSecrets } from './collectors/secretsScanner.js';
 import { backendApi } from './services/apiClient.js';
+import { withCollectionCycleLock, workerId } from './services/distributedLock.js';
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 60_000);
 const SUBNET_SCAN_ENABLED = process.env.WORKER_SUBNET_SCAN_ENABLED !== 'false';
+const ICS_SCAN_ENABLED = process.env.WORKER_ICS_SCAN_ENABLED !== 'false';
+const SECRETS_SCAN_ENABLED = process.env.WORKER_SECRETS_SCAN_ENABLED !== 'false';
 
 // Auto-derived subnets come from the container's own network interfaces,
 // which on the default Docker bridge network is always the bridge's
@@ -30,9 +37,16 @@ const PORT_NAMES: Record<number, string> = {
   8443: 'https-alt',
   9100: 'printer',
   62078: 'ios-sync',
+  502: 'modbus',
+  102: 's7comm',
+  4840: 'opcua',
+  47808: 'bacnet',
 };
 
+const ICS_PORTS = new Set([502, 102, 4840, 47808]);
+
 function inferDeviceRole(device: DiscoveredDevice): string {
+  if (device.openPorts.some((p) => ICS_PORTS.has(p))) return 'ics-device';
   if (device.openPorts.includes(3389) || device.openPorts.includes(445)) return 'windows-device';
   if (device.openPorts.includes(22)) return 'linux-device';
   if (device.openPorts.includes(9100)) return 'printer';
@@ -41,23 +55,34 @@ function inferDeviceRole(device: DiscoveredDevice): string {
 }
 
 async function registerDiscoveredDevice(device: DiscoveredDevice, segmentId: string): Promise<void> {
+  const hasIcsPort = device.openPorts.some((p) => ICS_PORTS.has(p));
+  // Confirm with a real protocol handshake before classifying as ICS/OT —
+  // an open port alone (e.g. something else listening on 502) isn't
+  // enough evidence to label a device as industrial equipment.
+  const icsProtocols = ICS_SCAN_ENABLED && hasIcsPort ? await scanIcsProtocols(device.ip) : [];
+  const deviceClass = icsProtocols.length > 0 ? 'ics' : 'it';
+
   const host = await backendApi.upsertHost({
     hostname: device.hostname ?? device.ip,
     ip_address: device.ip,
-    role: inferDeviceRole(device),
-    criticality: 'medium',
+    role: icsProtocols.length > 0 ? 'ics-device' : inferDeviceRole(device),
+    criticality: deviceClass === 'ics' ? 'high' : 'medium',
+    device_class: deviceClass,
     network_segment_id: segmentId,
   });
   const hostId = (host as { id: string }).id;
+  const confirmedIcsPorts = new Map(icsProtocols.map((p) => [p.port, p]));
 
   for (const port of device.openPorts) {
+    const ics = confirmedIcsPorts.get(port);
     await backendApi.upsertService({
       host_id: hostId,
-      name: PORT_NAMES[port] ?? `port-${port}`,
+      name: ics?.name ?? PORT_NAMES[port] ?? `port-${port}`,
       port,
       protocol: 'tcp',
       bind_address: device.ip,
       exposed_publicly: true,
+      protocol_family: ics?.protocolFamily ?? null,
     });
   }
 }
@@ -77,6 +102,66 @@ async function sweepSubnet(cidr: string, description: string, excludeIp: string 
   console.log(`[worker] discovered ${devices.length} device(s) on ${cidr}`);
   for (const device of devices) {
     await registerDiscoveredDevice(device, segmentId);
+  }
+}
+
+/** Cross-checks the kernel's ARP table against the current sweep — surfaces devices with recent traffic that the active TCP sweep found no open ports on. */
+async function crossCheckArpTable(segmentId: string, alreadyKnownIps: Set<string>): Promise<void> {
+  const entries = await readArpTable();
+  const newEntries = entries.filter((e) => !alreadyKnownIps.has(e.ip));
+  if (newEntries.length === 0) return;
+  console.log(`[worker] ARP table cross-check found ${newEntries.length} additional device(s) with no open probed ports`);
+  for (const entry of newEntries) {
+    await backendApi.upsertHost({
+      hostname: entry.ip,
+      ip_address: entry.ip,
+      role: 'device',
+      criticality: 'low',
+      device_class: 'it',
+      network_segment_id: segmentId,
+    });
+  }
+}
+
+async function scanContainerSecrets(containerId: string, containerAssetId: string): Promise<void> {
+  const env = await collectContainerEnv(containerId);
+  const findings: Array<Record<string, unknown>> = [];
+  for (const entry of env) {
+    const [key, ...rest] = entry.split('=');
+    const value = rest.join('=');
+    for (const match of scanTextForSecrets(value)) {
+      findings.push({
+        asset_type: 'container',
+        asset_id: containerAssetId,
+        kind: match.kind,
+        match_preview: match.matchPreview,
+        source: `container_env:${key}`,
+        severity: match.severity,
+      });
+    }
+  }
+  if (findings.length > 0) {
+    console.log(`[worker] found ${findings.length} potential secret(s) in container env vars`);
+    await backendApi.submitSecretFindings(findings);
+  }
+}
+
+async function checkCloudMetadataExposure(hostId: string): Promise<void> {
+  const results = await scanCloudMetadata();
+  for (const result of results) {
+    console.log(`[worker] cloud metadata endpoint reachable: ${result.provider}`);
+    await backendApi.upsertService({
+      host_id: hostId,
+      name: `cloud-metadata-${result.provider}`,
+      port: 80,
+      protocol: 'tcp',
+      bind_address: '169.254.169.254',
+      exposed_publicly: true,
+      protocol_family: 'cloud-metadata',
+    });
+  }
+  if (results.length > 0) {
+    await backendApi.patchHost(hostId, { device_class: 'cloud' });
   }
 }
 
@@ -105,6 +190,9 @@ async function runCollectionCycle(): Promise<void> {
   });
 
   const subnets = deriveSubnets(interfaces);
+  let primarySegmentId: string | null = null;
+  const knownDeviceIps = new Set<string>([hostInfo.ip_address as string]);
+
   if (subnets.length > 0) {
     const primarySubnet = subnets[0];
     const segment = await backendApi.upsertNetworkSegment({
@@ -113,9 +201,9 @@ async function runCollectionCycle(): Promise<void> {
       zone: 'internal',
       description: `Auto-discovered from ${hostInfo.hostname}'s network interfaces`,
     });
-    const segmentId = (segment as { id: string }).id;
-    await backendApi.upsertHost({ ...hostInfo, network_segment_id: segmentId });
-    console.log(`[worker] linked host to network segment ${primarySubnet} (${segmentId})`);
+    primarySegmentId = (segment as { id: string }).id;
+    await backendApi.upsertHost({ ...hostInfo, network_segment_id: primarySegmentId });
+    console.log(`[worker] linked host to network segment ${primarySubnet} (${primarySegmentId})`);
 
     if (SUBNET_SCAN_ENABLED) {
       // Exclude the worker's own IP — it's already tracked as the "worker"
@@ -132,6 +220,12 @@ async function runCollectionCycle(): Promise<void> {
     }
   }
 
+  if (SUBNET_SCAN_ENABLED && primarySegmentId) {
+    await crossCheckArpTable(primarySegmentId, knownDeviceIps);
+  }
+
+  await checkCloudMetadataExposure(hostId);
+
   const containers = await collectContainers();
   console.log(`[worker] discovered ${containers.length} container(s)`);
   for (const container of containers) {
@@ -143,12 +237,16 @@ async function runCollectionCycle(): Promise<void> {
       ports: container.ports,
       privileged: container.privileged,
     });
+    const createdId = (created as { id: string }).id;
     await backendApi.submitConfigSnapshot({
       asset_type: 'container',
-      asset_id: (created as { id: string }).id,
+      asset_id: createdId,
       kind: 'docker',
       data: container,
     });
+    if (SECRETS_SCAN_ENABLED) {
+      await scanContainerSecrets(container.id, createdId);
+    }
   }
 
   const services = await collectServices();
@@ -178,7 +276,11 @@ async function runCollectionCycle(): Promise<void> {
 
 async function loop(): Promise<void> {
   try {
-    await runCollectionCycle();
+    // Coordinates across horizontally-scaled worker replicas via Redis so
+    // only one replica runs a given cycle (see distributedLock.ts). The
+    // lock TTL is generously longer than the poll interval so a slow cycle
+    // never causes two replicas to run concurrently.
+    await withCollectionCycleLock(POLL_INTERVAL_MS * 2, runCollectionCycle);
   } catch (err) {
     console.error('[worker] collection cycle failed', err);
   } finally {
@@ -186,4 +288,5 @@ async function loop(): Promise<void> {
   }
 }
 
+console.log(`[worker] starting (id=${workerId()})`);
 loop();

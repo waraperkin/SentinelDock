@@ -7,7 +7,7 @@ export interface DiscoveredDevice {
   openPorts: number[];
 }
 
-const PROBE_PORTS = [22, 80, 443, 445, 3389, 8080, 8443, 9100, 62078];
+const PROBE_PORTS = [22, 80, 443, 445, 3389, 8080, 8443, 9100, 62078, 502, 102, 4840, 47808];
 const CONNECT_TIMEOUT_MS = 400;
 const MAX_CONCURRENCY = 32;
 /** Hard cap on addresses swept per cycle so a /16 or larger CIDR can't stall the worker. */

@@ -73,6 +73,45 @@ const SCENARIO_LIBRARY: Array<{ match: RegExp; title: string; steps: PlaybookSte
     },
   },
   {
+    match: /modbus|s7comm|opcua|bacnet|ics-protocol/i,
+    title: 'ICS/OT protocol exposure — potential physical-process safety impact',
+    steps: {
+      immediate: [
+        'Treat this as a safety incident, not just an IT incident — loop in OT/plant engineering immediately.',
+        'Do NOT send arbitrary commands to the device to "test" it — many ICS protocols have no safe read-only mode.',
+      ],
+      containment: [
+        'Firewall the OT segment from IT/internet immediately, preserving the OT network\'s own internal traffic.',
+        'If the device supports it, verify it is in a fail-safe/manual-override state before further action.',
+      ],
+      eradication: ['Work with the OT vendor/integrator to confirm no unauthorized setpoint or logic changes were made.', 'Patch or replace the device only during a scheduled maintenance window with engineering sign-off.'],
+      recovery: ['Re-enable connectivity only through a properly configured OT firewall/data diode.', 'Confirm physical process readings match expected baselines before declaring recovery.'],
+      lessonsLearned: ['ICS/OT protocols must never be reachable outside a dedicated, firewalled OT segment — treat this as a Purdue Model violation.', 'Review the OT network architecture with plant engineering.'],
+    },
+  },
+  {
+    match: /cloud-metadata|ssrf|iam/i,
+    title: 'Cloud metadata exposure — potential IAM credential theft',
+    steps: {
+      immediate: ['Assume instance IAM credentials may be compromised; check CloudTrail/audit logs for API calls from unexpected principals.', 'Identify every application on this asset that could be tricked into an SSRF request to 169.254.169.254.'],
+      containment: ['Rotate/revoke the instance role\'s temporary credentials immediately.', 'Enforce IMDSv2 (or equivalent) so token-less metadata requests stop working.'],
+      eradication: ['Fix the underlying SSRF vulnerability in the application (validate/allowlist outbound request targets).', 'Scope down the IAM role to least-privilege — assume it was fully exposed.'],
+      recovery: ['Re-issue scoped credentials and confirm normal application function.', 'Re-run the evaluation pipeline to confirm metadata is no longer reachable from application code paths.'],
+      lessonsLearned: ['Add SSRF protection (egress allowlisting, IMDSv2 enforcement) to the standard cloud hardening baseline.', 'Audit all instance roles for least-privilege as a standing practice, not just after an incident.'],
+    },
+  },
+  {
+    match: /secret|aws_access_key|private_key|api_key/i,
+    title: 'Exposed secret — credential compromise',
+    steps: {
+      immediate: ['Treat the credential as compromised the moment it is found, even if there is no evidence of misuse yet.', 'Identify every system/service that trusts this credential.'],
+      containment: ['Revoke/rotate the credential immediately at its source (cloud IAM, database, third-party API provider).', 'Remove the secret from the environment variable, config file, or image layer where it was found.'],
+      eradication: ['Purge the secret from any container image layers, git history, or CI/CD artifact cache it may have leaked into.', 'Audit logs for any usage of the credential during the suspected exposure window.'],
+      recovery: ['Re-issue a fresh credential via a proper secret manager (not an env var baked into the image/config).', 'Confirm the workload is healthy with the rotated credential.'],
+      lessonsLearned: ['Migrate to a dedicated secrets manager (Vault, AWS Secrets Manager, etc.) instead of environment variables.', 'Add a pre-commit / CI secrets-scanning gate to catch this before it ships.'],
+    },
+  },
+  {
     match: /vulnerability|cve/i,
     title: 'Known-vulnerable service version',
     steps: {
@@ -81,6 +120,32 @@ const SCENARIO_LIBRARY: Array<{ match: RegExp; title: string; steps: PlaybookSte
       eradication: ['Upgrade the service past the vulnerable version.', 'Re-scan to confirm the CVE no longer matches.'],
       recovery: ['Restore normal access once patched and re-scanned clean.', 'Monitor for a full cycle for regressions.'],
       lessonsLearned: ['Add the affected service to a routine patch-cadence review.', 'Consider automated dependency/version update alerts.'],
+    },
+  },
+  {
+    match: /ransomware-class|widespread compromise/i,
+    title: 'Ransomware-class incident simulation — broad blast radius, critical severity',
+    steps: {
+      immediate: [
+        'Activate the incident response team and executive notification chain — this simulates the blast radius of a ransomware event, not an isolated finding.',
+        'Identify and preserve forensic evidence (logs, memory, disk snapshots) on every reachable asset in the path before any remediation touches them.',
+      ],
+      containment: [
+        'Isolate every asset in the attack path\'s blast radius from the network — segment first, investigate second.',
+        'Disable the entry point (the originally exposed service) network-wide, not just on the one host.',
+      ],
+      eradication: [
+        'Assume every asset in the blast radius is compromised until individually verified clean — do not trust in-place remediation alone.',
+        'Rebuild affected hosts/containers from known-good images/snapshots rather than patching in place.',
+      ],
+      recovery: [
+        'Restore from backups verified to predate the exposure window, in priority order by business criticality.',
+        'Bring assets back online segment by segment, re-validating each with a fresh policy evaluation pass before reconnecting the next.',
+      ],
+      lessonsLearned: [
+        'This blast radius exists because of the specific dependency/exposure chain in the attack path — fix the chain, not just the entry point.',
+        'Run a tabletop exercise against this exact attack path with the incident response team.',
+      ],
     },
   },
 ];
@@ -161,7 +226,15 @@ export async function generateIncidentScenarios(): Promise<IncidentScenario[]> {
             [risk.source_violation_ids],
           )).map((r) => r.key)
         : [];
-    const scenario = selectScenario(`${risk.summary} ${policyKeys.join(' ')}`, risk.category);
+    // A critical risk whose attack path reaches 3+ other assets is treated
+    // as a ransomware-class simulation — the containment/recovery guidance
+    // for "isolate everything in the blast radius" matters more here than
+    // the specific entry-point playbook.
+    const isRansomwareClass = risk.severity === 'critical' && (relatedPath?.blast_radius ?? 0) >= 3;
+    const scenarioHaystack = isRansomwareClass
+      ? 'ransomware-class widespread compromise'
+      : `${risk.summary} ${policyKeys.join(' ')}`;
+    const scenario = selectScenario(scenarioHaystack, risk.category);
     const title = `${risk.severity.toUpperCase()}: ${scenario.title} (${risk.asset_type}:${risk.asset_id})`;
     const playbook = buildPlaybook(risk, relatedPath, scenario);
 

@@ -87,6 +87,16 @@ const NAV_ITEMS: NavItem[] = [
       </Icon>
     ),
   },
+  {
+    href: '/secrets',
+    label: 'Secrets',
+    icon: (
+      <Icon>
+        <circle cx="7.5" cy="12.5" r="3.2" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M9.8 10.2 17 3M14.3 5.7l2 2M16.3 3.7l2 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </Icon>
+    ),
+  },
 ];
 
 export function Sidebar() {

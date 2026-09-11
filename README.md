@@ -50,16 +50,17 @@ generates incident-response playbooks.
 | Entity | Purpose |
 |---|---|
 | `network_segments` | Named CIDR zones (internal/dmz/public/management) |
-| `hosts` | Physical/virtual hosts, role, criticality, segment |
+| `hosts` | Physical/virtual hosts, role, criticality, segment, `device_class` (it/ics/cloud) |
 | `containers` | Docker containers on a host, image, ports, privileged flag |
-| `services` | Listening services on a host or container, port, exposure |
+| `services` | Listening services on a host or container, port, exposure, `protocol_family` (modbus/s7/opcua/bacnet/cloud-metadata) |
 | `dependencies` | Directed edges between any two assets (source → target) |
 | `config_snapshots` | Immutable, versioned config blobs per asset (`kind`: os/docker/network/service) |
 | `policies` | Policy definitions (see format below) |
 | `policy_violations` | Detected breaches of a policy against an asset |
 | `risks` | Aggregated risk per asset, scored from open violations + criticality |
-| `attack_paths` | Heuristic graph paths from an exposed entry point to a target asset |
+| `attack_paths` | Heuristic graph paths from an exposed entry point to a target asset, hops tagged with MITRE ATT&CK technique labels |
 | `incident_scenarios` | Generated markdown playbooks for high/critical risks |
+| `secrets_findings` | Redacted secret-pattern matches (never the full value) |
 
 ## API reference
 
@@ -96,6 +97,10 @@ All endpoints are served by the backend on `BACKEND_PORT` (default 4000).
 ### Incident scenarios
 - `GET /incident-scenarios?severity=`
 - `GET /incident-scenarios/:id`
+
+### Secrets
+- `GET /secrets?asset_type=&asset_id=` — list detected secret findings (redacted previews only)
+- `POST /secrets` — ingest a batch of findings `{ findings: [...] }`
 
 ### Dashboard
 - `GET /dashboard/summary` — asset counts, global risk score, open violation count, incident scenario count
@@ -197,6 +202,85 @@ Desktop 4.29+) — without it, `network_mode: host` silently falls back to
 bridge-like behavior and you'll still only see container IPs. Set
 `WORKER_SUBNET_SCAN_ENABLED=false` to disable the sweep entirely.
 
+## Advanced platform capabilities
+
+A note on framing: no amount of README copy makes a project "beat" Wiz,
+Tenable, Qualys, Rapid7, or CrowdStrike — those are large commercial
+platforms with entire engineering orgs, live threat intel feeds, EDR
+agents, and compliance certifications behind them. What follows is an
+honest description of what SentinelDock actually does, scoped to what
+runs for real in this repo.
+
+**ICS/OT protocol fingerprinting** (`worker/src/collectors/icsScanner.ts`)
+— real protocol-level handshakes, not just "port is open":
+- **Modbus/TCP (502)**: sends a Read Holding Registers request, confirms
+  via the echoed MBAP transaction ID.
+- **S7comm (102)**: sends a COTP Connection Request, confirms via the COTP
+  Connection Confirm TPDU code.
+- **OPC-UA (4840)**: sends a Hello message, confirms via the ACK reply.
+- **BACnet (47808)**: best-effort TCP-only probe — BACnet is normally UDP,
+  which this worker doesn't probe (would need raw sockets), so BACnet
+  under-detects by design.
+
+A host is only classified `device_class: ics` and given `role: ics-device`
+after a confirmed handshake — an open port alone never triggers this.
+
+**Cloud metadata exposure** (`worker/src/collectors/cloudMetadataScanner.ts`)
+— checks whether AWS/Azure (`169.254.169.254`) and GCP
+(`metadata.google.internal`) instance metadata endpoints are reachable.
+Reachability is the signal, modeling the SSRF-to-credential-theft path
+(see the 2019 Capital One breach) — SentinelDock does not call any real
+cloud provider IAM API.
+
+**Secrets detection** (`worker/src/collectors/secretsScanner.ts`) — local,
+offline regex matching (AWS access keys, PEM private key headers, generic
+`api_key`/`password` assignments) run against container environment
+variables fetched via `docker inspect`. Raw values never leave the worker
+process — only a short, redacted preview (`AKIA...ple (20 chars)`) is ever
+sent to the backend and stored. This is not a replacement for a dedicated
+secrets-scanning product (no entropy analysis, no provider-specific key
+formats beyond AWS) — it catches the highest-signal, most common cases.
+Findings are append-only (not re-verified as resolved on later scans).
+
+**ARP table cross-check** (`worker/src/collectors/arpScanner.ts`) — reads
+`/proc/net/arp` (passive; devices the kernel has recently exchanged ARP
+frames with) as a cross-check against the active TCP sweep, surfacing
+devices with no open probed ports. Active LLDP frame capture was
+deliberately **not** implemented — it needs raw socket capture with
+elevated container privileges this project intentionally avoids requiring.
+
+**MITRE ATT&CK-flavored kill chain labeling** (`backend/src/services/killChain.ts`)
+— tags each attack-path hop with a tactic/technique label (e.g. "Lateral
+Movement (TA0008): Remote Services (T1021)") based on the dependency
+relation it traversed. This is a small heuristic label set matched to the
+handful of relation types SentinelDock's graph actually produces, not a
+full ATT&CK Navigator integration.
+
+**Privilege escalation / blast radius** — an attack path that can reach a
+privileged container is auto-escalated to `critical` severity regardless
+of its other hop severities (privileged containers are a de facto
+root-on-host escape route). `blast_radius` is the count of distinct
+assets reachable from the entry point via bidirectional graph traversal.
+
+**Ransomware-class incident simulation** — any critical-severity risk
+whose attack path reaches 3+ other assets automatically gets the
+"isolate the whole blast radius, not just the entry point" playbook
+instead of its normal entry-specific one, modeling a realistic large-scale
+compromise response.
+
+**Distributed worker coordination** (`worker/src/services/distributedLock.ts`)
+— when scaled with `docker compose up -d --scale worker=3`, replicas
+coordinate via a Redis `SET NX PX` mutex so only one replica runs a given
+collection cycle (fail-open to standalone if Redis is unreachable). This
+prevents duplicate concurrent scans; it does **not** yet split work across
+replicas (e.g. one subnet per replica) — that needs dynamic replica
+membership tracking, which is a natural next step, not implemented here.
+
+**NVD/live CVE lookups, SNMP, LLDP, real cloud IAM API calls, and DevOps
+pipeline scanning are explicitly out of scope** in this iteration — see
+"Known limitations" below for why, rather than silently pretending they
+exist.
+
 ## Known limitations
 
 - The attack-path builder is a simple BFS heuristic over the `dependencies`
@@ -227,20 +311,27 @@ Beyond the five baseline examples, `policies/` also includes:
 
 6. `sensitive-ports-exposed-wan.yaml` — Telnet/RDP reachable publicly
 7. `ot-it-segmentation.yaml` — an OT/ICS-role host sharing a segment with general IT traffic
+8. `ics-protocol-exposed.yaml` — a confirmed Modbus/S7/OPC-UA/BACnet handshake, publicly exposed
+9. `cloud-metadata-reachable.yaml` — the cloud instance metadata endpoint is reachable
+10. `iam-privileged-role-exposed.yaml` — a high/critical asset can reach cloud metadata (proxy signal to review its IAM role)
+11. `critical-host-flat-network.yaml` — a critical host with no dedicated management-segment isolation
 
 ## Risk categories
 
-Risks are computed from two independent signals — open policy violations
-(classified into `exposure` / `network` / `container` / `host` /
-`misconfiguration` by the triggering policy) and known-vulnerable service
-versions (`vulnerability`, scored from CVSS). An asset can carry risks in
-more than one category simultaneously.
+Risks are computed from three independent signals — open policy
+violations (classified into `exposure` / `network` / `container` / `host`
+/ `ics` / `cloud` / `misconfiguration` by the triggering policy),
+known-vulnerable service versions (`vulnerability`, scored from CVSS), and
+detected secrets (`secrets`, scored from finding severity). An asset can
+carry risks in more than one category simultaneously.
 
 ## Incident playbooks
 
 Each generated `incident_scenarios` row picks a category-specific playbook
 (SSH compromise, Docker API compromise, database compromise, privileged
-container compromise, or known-vulnerability response) from
+container compromise, known-vulnerability response, ICS/OT protocol
+exposure, cloud metadata/SSRF exposure, exposed secrets, or a
+ransomware-class blast-radius simulation) from
 `backend/src/services/incidentEngine.ts`, each with the five standard
 sections: **Immediate Actions**, **Containment**, **Eradication**,
 **Recovery**, **Lessons Learned**.

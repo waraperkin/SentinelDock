@@ -9,6 +9,12 @@ const CRITICALITY_COLOR: Record<string, string> = {
   critical: 'text-[var(--sd-critical)]',
 };
 
+const DEVICE_CLASS_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  it: { label: 'IT', color: 'var(--sd-text-secondary)', bg: 'transparent' },
+  ics: { label: 'ICS/OT', color: 'var(--sd-critical)', bg: 'rgba(239,74,95,0.14)' },
+  cloud: { label: 'Cloud', color: 'var(--sd-accent-strong)', bg: 'var(--sd-accent-soft)' },
+};
+
 export default async function InventoryPage() {
   const [hosts, containers, services, segments] = await Promise.all([
     apiGet<Host[]>('/assets/hosts'),
@@ -25,20 +31,26 @@ export default async function InventoryPage() {
       </div>
       <DataTable
         title={`Hosts (${hosts.length})`}
-        headers={['Hostname', 'OS', 'Role', 'Criticality', 'IP']}
-        rows={hosts.map((h) => [
-          <span key="h" className="sd-mono">
-            {h.hostname}
-          </span>,
-          h.os ?? '—',
-          h.role,
-          <span key="c" className={`font-medium ${CRITICALITY_COLOR[h.criticality] ?? ''}`}>
-            {h.criticality}
-          </span>,
-          <span key="ip" className="sd-mono text-[var(--sd-text-secondary)]">
-            {h.ip_address ?? '—'}
-          </span>,
-        ])}
+        headers={['Hostname', 'Class', 'OS', 'Role', 'Criticality', 'IP']}
+        rows={hosts.map((h) => {
+          const dc = DEVICE_CLASS_STYLE[h.device_class] ?? DEVICE_CLASS_STYLE.it;
+          return [
+            <span key="h" className="sd-mono">
+              {h.hostname}
+            </span>,
+            <span key="dc" className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: dc.color, backgroundColor: dc.bg }}>
+              {dc.label}
+            </span>,
+            h.os ?? '—',
+            h.role,
+            <span key="c" className={`font-medium ${CRITICALITY_COLOR[h.criticality] ?? ''}`}>
+              {h.criticality}
+            </span>,
+            <span key="ip" className="sd-mono text-[var(--sd-text-secondary)]">
+              {h.ip_address ?? '—'}
+            </span>,
+          ];
+        })}
       />
       <DataTable
         title={`Containers (${containers.length})`}

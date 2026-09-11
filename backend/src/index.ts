@@ -7,6 +7,7 @@ import { riskRoutes } from './routes/risks.js';
 import { attackPathRoutes } from './routes/attackPaths.js';
 import { incidentRoutes } from './routes/incidents.js';
 import { dashboardRoutes } from './routes/dashboard.js';
+import { secretRoutes } from './routes/secrets.js';
 
 const app = Fastify({ logger: true });
 
@@ -21,6 +22,7 @@ await app.register(riskRoutes);
 await app.register(attackPathRoutes);
 await app.register(incidentRoutes);
 await app.register(dashboardRoutes);
+await app.register(secretRoutes);
 
 const port = Number(process.env.BACKEND_PORT ?? 4000);
 

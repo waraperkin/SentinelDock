@@ -61,3 +61,18 @@ export async function collectContainers(): Promise<CollectedContainer[]> {
     return [];
   }
 }
+
+/**
+ * Fetches a container's environment variables via `docker inspect`. Used
+ * only for local secrets scanning (worker/src/collectors/secretsScanner.ts)
+ * — raw values never leave the worker process; only a redacted preview of
+ * any match is ever sent to the backend.
+ */
+export async function collectContainerEnv(containerId: string): Promise<string[]> {
+  try {
+    const info = await dockerRequest<{ Config?: { Env?: string[] } }>(`/containers/${containerId}/json`);
+    return info.Config?.Env ?? [];
+  } catch {
+    return [];
+  }
+}

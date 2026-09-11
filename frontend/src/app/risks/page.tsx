@@ -39,6 +39,9 @@ export default async function RisksPage({ searchParams }: { searchParams: { seve
           <option value="network">Network</option>
           <option value="container">Container</option>
           <option value="host">Host</option>
+          <option value="ics">ICS/OT</option>
+          <option value="cloud">Cloud</option>
+          <option value="secrets">Secrets</option>
           <option value="patching">Patching</option>
         </select>
         <button className="rounded-lg px-4 py-2 text-sm font-medium bg-[var(--sd-accent)] text-[#03211f] hover:brightness-110 transition" type="submit">

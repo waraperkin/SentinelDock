@@ -1,5 +1,5 @@
 import { query } from '../db/pool.js';
-import type { PolicyViolation, Risk, Severity, Host, ServiceRecord } from '../types/models.js';
+import type { PolicyViolation, Risk, Severity, Host, ServiceRecord, SecretFinding } from '../types/models.js';
 
 const SEVERITY_WEIGHT: Record<Severity, number> = { low: 1, medium: 3, high: 6, critical: 10 };
 const CRITICALITY_MULTIPLIER: Record<Severity, number> = { low: 1, medium: 1.2, high: 1.5, critical: 2 };
@@ -22,6 +22,9 @@ const POLICY_KEY_CATEGORY: Record<string, Risk['category']> = {
   'privileged-container': 'container',
   'outdated-os-critical-host': 'host',
   'ot-it-segmentation': 'network',
+  'ics-protocol-exposed': 'ics',
+  'cloud-metadata-reachable': 'cloud',
+  'iam-privileged-role-exposed': 'cloud',
 };
 
 export function categoryForViolation(violation: ViolationWithPolicyKey): Risk['category'] {
@@ -93,6 +96,33 @@ export async function recomputeRisks(): Promise<Risk[]> {
       `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
        VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
       ['service', service.id, 'vulnerability', severity, score, summary],
+    );
+    results.push(row);
+  }
+
+  // Independent signal: detected secrets, grouped per asset. A single
+  // exposed AWS access key or private key is critical on its own,
+  // regardless of anything else found on that asset.
+  const SECRET_SEVERITY_WEIGHT: Record<string, number> = { medium: 3, high: 6, critical: 10 };
+  const secretFindings = await query<SecretFinding>('SELECT * FROM secrets_findings ORDER BY detected_at DESC');
+  const secretsByAsset = new Map<string, SecretFinding[]>();
+  for (const finding of secretFindings) {
+    const key = `${finding.asset_type}:${finding.asset_id}`;
+    secretsByAsset.set(key, [...(secretsByAsset.get(key) ?? []), finding]);
+  }
+  for (const [key, findings] of secretsByAsset) {
+    const [assetType, assetId] = key.split(':');
+    const worstSeverity = findings.reduce<Severity>((worst, f) => {
+      return (SECRET_SEVERITY_WEIGHT[f.severity] ?? 0) > (SECRET_SEVERITY_WEIGHT[worst] ?? 0) ? f.severity : worst;
+    }, 'medium');
+    const score = Math.min(100, findings.reduce((sum, f) => sum + (SECRET_SEVERITY_WEIGHT[f.severity] ?? 3), 0) * 1.5);
+    const kinds = Array.from(new Set(findings.map((f) => f.kind)));
+    const summary = `${findings.length} potential secret(s) detected (${kinds.join(', ')})`;
+
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
+      [assetType, assetId, 'secrets', worstSeverity, score, summary],
     );
     results.push(row);
   }

@@ -16,9 +16,11 @@ async function request<T>(path: string, method: string, body?: unknown): Promise
 
 export const backendApi = {
   upsertHost: (host: Record<string, unknown>) => request('/assets/hosts', 'POST', host),
+  patchHost: (id: string, patch: Record<string, unknown>) => request(`/assets/hosts/${id}`, 'PATCH', patch),
   upsertContainer: (container: Record<string, unknown>) => request('/assets/containers', 'POST', container),
   upsertService: (service: Record<string, unknown>) => request('/assets/services', 'POST', service),
   upsertNetworkSegment: (segment: Record<string, unknown>) => request('/assets/network', 'POST', segment),
   submitConfigSnapshot: (snapshot: Record<string, unknown>) => request('/configs', 'POST', snapshot),
+  submitSecretFindings: (findings: Array<Record<string, unknown>>) => request('/secrets', 'POST', { findings }),
   triggerEvaluation: () => request('/policies/evaluate', 'POST'),
 };
