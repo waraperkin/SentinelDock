@@ -3,7 +3,7 @@ import type { AttackPath, AttackPathHop, Dependency, Host, Risk, ServiceRecord, 
 
 const SEVERITY_ORDER: Severity[] = ['low', 'medium', 'high', 'critical'];
 
-function worseSeverity(a: Severity, b: Severity): Severity {
+export function worseSeverity(a: Severity, b: Severity): Severity {
   return SEVERITY_ORDER.indexOf(a) >= SEVERITY_ORDER.indexOf(b) ? a : b;
 }
 

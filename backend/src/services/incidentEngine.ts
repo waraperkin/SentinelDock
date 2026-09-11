@@ -85,7 +85,7 @@ const SCENARIO_LIBRARY: Array<{ match: RegExp; title: string; steps: PlaybookSte
   },
 ];
 
-function selectScenario(summary: string, category: string): { title: string; steps: PlaybookSteps } {
+export function selectScenario(summary: string, category: string): { title: string; steps: PlaybookSteps } {
   const haystack = `${summary} ${category}`;
   const found = SCENARIO_LIBRARY.find((s) => s.match.test(haystack));
   return found ? { title: found.title, steps: found.steps } : { title: `${category} risk`, steps: GENERIC_STEPS };

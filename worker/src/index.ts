@@ -8,6 +8,18 @@ import { backendApi } from './services/apiClient.js';
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 60_000);
 const SUBNET_SCAN_ENABLED = process.env.WORKER_SUBNET_SCAN_ENABLED !== 'false';
 
+// Auto-derived subnets come from the container's own network interfaces,
+// which on the default Docker bridge network is always the bridge's
+// internal range (e.g. 172.18.0.0/24) — never the real LAN/VLANs the host
+// machine sits on. WORKER_SCAN_SUBNETS lets you point the sweep at your
+// actual subnets explicitly; this works even without host networking mode
+// as long as the container can route to them (Docker Desktop typically
+// NATs outbound LAN traffic through the host, so this often just works).
+const EXPLICIT_SCAN_SUBNETS = (process.env.WORKER_SCAN_SUBNETS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const PORT_NAMES: Record<number, string> = {
   22: 'ssh',
   80: 'http',
@@ -50,6 +62,24 @@ async function registerDiscoveredDevice(device: DiscoveredDevice, segmentId: str
   }
 }
 
+async function sweepSubnet(cidr: string, description: string, excludeIp: string | null): Promise<void> {
+  const segment = await backendApi.upsertNetworkSegment({
+    name: `subnet-${cidr}`,
+    cidr,
+    zone: 'internal',
+    description,
+  });
+  const segmentId = (segment as { id: string }).id;
+
+  console.log(`[worker] sweeping ${cidr} for devices...`);
+  const rawDevices = await scanSubnet(cidr);
+  const devices = excludeIp ? rawDevices.filter((d) => d.ip !== excludeIp) : rawDevices;
+  console.log(`[worker] discovered ${devices.length} device(s) on ${cidr}`);
+  for (const device of devices) {
+    await registerDiscoveredDevice(device, segmentId);
+  }
+}
+
 async function runCollectionCycle(): Promise<void> {
   console.log('[worker] starting collection cycle');
 
@@ -88,16 +118,17 @@ async function runCollectionCycle(): Promise<void> {
     console.log(`[worker] linked host to network segment ${primarySubnet} (${segmentId})`);
 
     if (SUBNET_SCAN_ENABLED) {
-      console.log(`[worker] sweeping ${primarySubnet} for devices...`);
-      const rawDevices = await scanSubnet(primarySubnet);
       // Exclude the worker's own IP — it's already tracked as the "worker"
       // host above; without this it would also show up as a generic
       // "device" duplicate of itself.
-      const devices = rawDevices.filter((d) => d.ip !== hostInfo.ip_address);
-      console.log(`[worker] discovered ${devices.length} device(s) on ${primarySubnet}`);
-      for (const device of devices) {
-        await registerDiscoveredDevice(device, segmentId);
-      }
+      await sweepSubnet(primarySubnet, `Auto-discovered from ${hostInfo.hostname}'s network interfaces`, hostInfo.ip_address as string | null);
+    }
+  }
+
+  if (SUBNET_SCAN_ENABLED && EXPLICIT_SCAN_SUBNETS.length > 0) {
+    for (const cidr of EXPLICIT_SCAN_SUBNETS) {
+      if (subnets.includes(cidr)) continue; // already swept above
+      await sweepSubnet(cidr, 'Configured via WORKER_SCAN_SUBNETS', null);
     }
   }
 

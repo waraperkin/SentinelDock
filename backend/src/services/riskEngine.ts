@@ -4,7 +4,7 @@ import type { PolicyViolation, Risk, Severity, Host, ServiceRecord } from '../ty
 const SEVERITY_WEIGHT: Record<Severity, number> = { low: 1, medium: 3, high: 6, critical: 10 };
 const CRITICALITY_MULTIPLIER: Record<Severity, number> = { low: 1, medium: 1.2, high: 1.5, critical: 2 };
 
-interface ViolationWithPolicyKey extends PolicyViolation {
+export interface ViolationWithPolicyKey extends PolicyViolation {
   policy_key: string;
 }
 
@@ -24,11 +24,11 @@ const POLICY_KEY_CATEGORY: Record<string, Risk['category']> = {
   'ot-it-segmentation': 'network',
 };
 
-function categoryForViolation(violation: ViolationWithPolicyKey): Risk['category'] {
+export function categoryForViolation(violation: ViolationWithPolicyKey): Risk['category'] {
   return POLICY_KEY_CATEGORY[violation.policy_key] ?? (violation.asset_type === 'container' ? 'container' : 'misconfiguration');
 }
 
-function severityFromCvss(score: number): Severity {
+export function severityFromCvss(score: number): Severity {
   if (score >= 9) return 'critical';
   if (score >= 7) return 'high';
   if (score >= 4) return 'medium';
