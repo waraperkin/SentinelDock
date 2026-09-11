@@ -165,9 +165,37 @@ docker compose up --build
 
 The worker starts collecting on its own schedule (`WORKER_POLL_INTERVAL_MS`,
 default 60s) and will register the backend/worker container's own host,
-Docker containers, and locally listening services, then trigger
-`/policies/evaluate` after each cycle. Everything is also reachable
-directly via the REST API for scripted or declarative ingestion.
+Docker containers, and locally listening services, derive its subnet, and
+sweep that subnet for other devices, then trigger `/policies/evaluate`
+after each cycle. Everything is also reachable directly via the REST API
+for scripted or declarative ingestion.
+
+## Real subnet / LAN device discovery
+
+The worker performs a real TCP-connect sweep (`worker/src/collectors/subnetScanner.ts`)
+of every host address in its derived subnet — up to a /16, capped at 254
+addresses per cycle, bounded concurrency — probing a curated port list
+(SSH, HTTP/S, SMB, RDP, printer, iOS sync, etc.). A device counts as
+discovered if any port is open, or if the OS actively refused a connection
+(`ECONNREFUSED`, which only happens if something answered on that IP).
+Discovered devices are registered as `Host` rows (role inferred from open
+ports — `windows-device`, `linux-device`, `printer`, `mobile-device`) with
+their open ports as `Service` rows, so they immediately flow through the
+same policy/risk/attack-path pipeline as everything else.
+
+**By default this only sees the Docker bridge network** (other containers
+in the compose project), because that's all the worker container can
+reach. To sweep your actual LAN, run the worker with host networking:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host-network.yml up -d --build
+```
+
+On Linux this works natively. On Windows/Mac (Docker Desktop) you must
+first enable **Settings → Resources → Network → Host Networking** (Docker
+Desktop 4.29+) — without it, `network_mode: host` silently falls back to
+bridge-like behavior and you'll still only see container IPs. Set
+`WORKER_SUBNET_SCAN_ENABLED=false` to disable the sweep entirely.
 
 ## Known limitations
 

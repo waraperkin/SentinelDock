@@ -2,7 +2,91 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Surfaces */
+  --sd-bg: #06090f;
+  --sd-bg-elevated: #0c121c;
+  --sd-surface: #101827;
+  --sd-surface-hover: #141d2e;
+  --sd-border: #1e2a3d;
+  --sd-border-strong: #2a3a52;
+
+  /* Text */
+  --sd-text-primary: #eef2f9;
+  --sd-text-secondary: #94a3b8;
+  --sd-text-muted: #5b6b85;
+
+  /* Brand accent — signal cyan, distinct from generic "blue-500" defaults */
+  --sd-accent: #22d3c8;
+  --sd-accent-soft: rgba(34, 211, 200, 0.12);
+  --sd-accent-strong: #5eead4;
+
+  /* Severity system — deliberately desaturated at rest, vivid on alert */
+  --sd-low: #64748b;
+  --sd-medium: #d9a441;
+  --sd-high: #e8823a;
+  --sd-critical: #ef4a5f;
+  --sd-critical-glow: rgba(239, 74, 95, 0.35);
+
+  --sd-font-display: var(--font-display), system-ui, sans-serif;
+  --sd-font-body: var(--font-body), system-ui, sans-serif;
+  --sd-font-mono: var(--font-mono), ui-monospace, monospace;
+}
+
 body {
-  background-color: #0b1220;
-  color: #e2e8f0;
+  background-color: var(--sd-bg);
+  color: var(--sd-text-primary);
+  font-family: var(--sd-font-body);
+  background-image:
+    radial-gradient(ellipse 900px 500px at 12% -10%, rgba(34, 211, 200, 0.06), transparent 60%),
+    radial-gradient(ellipse 700px 400px at 100% 0%, rgba(239, 74, 95, 0.04), transparent 55%);
+  background-attachment: fixed;
+}
+
+h1,
+h2,
+h3,
+.sd-display {
+  font-family: var(--sd-font-display);
+  letter-spacing: -0.01em;
+}
+
+.sd-mono {
+  font-family: var(--sd-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.sd-panel {
+  background: linear-gradient(180deg, var(--sd-surface) 0%, var(--sd-bg-elevated) 100%);
+  border: 1px solid var(--sd-border);
+  border-radius: 0.75rem;
+}
+
+.sd-panel:hover {
+  border-color: var(--sd-border-strong);
+}
+
+.sd-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.sd-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sd-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--sd-border-strong);
+  border-radius: 4px;
+}
+
+@keyframes sd-pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.sd-live-dot {
+  animation: sd-pulse-glow 2.2s ease-in-out infinite;
 }

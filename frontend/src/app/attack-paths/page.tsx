@@ -11,24 +11,27 @@ export default async function AttackPathsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Attack Paths</h1>
+      <div className="mb-8">
+        <h1 className="text-[26px] font-display font-semibold text-[var(--sd-text-primary)]">Attack Paths</h1>
+        <p className="mt-1 text-sm text-[var(--sd-text-secondary)]">Traversed from every at-risk exposed entry point across the dependency graph.</p>
+      </div>
       <AttackPathGraphView graph={graph} />
       <div className="mt-6 space-y-3">
         {paths.map((path) => (
-          <div key={path.id} className="border border-slate-800 rounded-lg p-4 bg-slate-900">
-            <div className="flex items-center justify-between">
-              <div className="font-semibold">{path.name}</div>
-              <div className="flex items-center gap-2">
+          <div key={path.id} className="sd-panel p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div className="font-medium text-[var(--sd-text-primary)]">{path.name}</div>
+              <div className="flex items-center gap-3 shrink-0">
                 <SeverityBadge severity={path.severity} />
-                <span className="text-slate-400 text-sm">blast radius {path.blast_radius}</span>
+                <span className="text-[var(--sd-text-muted)] text-xs sd-mono">blast radius {path.blast_radius}</span>
               </div>
             </div>
-            <div className="text-slate-400 text-sm mt-1">
+            <div className="text-[var(--sd-text-secondary)] text-sm mt-2 sd-mono">
               {path.entry_asset_type}:{path.entry_asset_id} → {path.target_asset_type}:{path.target_asset_id}
             </div>
           </div>
         ))}
-        {paths.length === 0 && <p className="text-slate-500">No attack paths built yet.</p>}
+        {paths.length === 0 && <p className="text-[var(--sd-text-muted)] text-sm">No attack paths built yet.</p>}
       </div>
     </div>
   );

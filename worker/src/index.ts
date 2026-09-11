@@ -2,9 +2,53 @@ import { collectHost } from './collectors/hostCollector.js';
 import { collectNetworkInterfaces, collectRoutes, deriveSubnets } from './collectors/networkCollector.js';
 import { collectContainers } from './collectors/dockerCollector.js';
 import { collectServices } from './collectors/serviceCollector.js';
+import { scanSubnet, type DiscoveredDevice } from './collectors/subnetScanner.js';
 import { backendApi } from './services/apiClient.js';
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 60_000);
+const SUBNET_SCAN_ENABLED = process.env.WORKER_SUBNET_SCAN_ENABLED !== 'false';
+
+const PORT_NAMES: Record<number, string> = {
+  22: 'ssh',
+  80: 'http',
+  443: 'https',
+  445: 'smb',
+  3389: 'rdp',
+  8080: 'http-alt',
+  8443: 'https-alt',
+  9100: 'printer',
+  62078: 'ios-sync',
+};
+
+function inferDeviceRole(device: DiscoveredDevice): string {
+  if (device.openPorts.includes(3389) || device.openPorts.includes(445)) return 'windows-device';
+  if (device.openPorts.includes(22)) return 'linux-device';
+  if (device.openPorts.includes(9100)) return 'printer';
+  if (device.openPorts.includes(62078)) return 'mobile-device';
+  return 'device';
+}
+
+async function registerDiscoveredDevice(device: DiscoveredDevice, segmentId: string): Promise<void> {
+  const host = await backendApi.upsertHost({
+    hostname: device.hostname ?? device.ip,
+    ip_address: device.ip,
+    role: inferDeviceRole(device),
+    criticality: 'medium',
+    network_segment_id: segmentId,
+  });
+  const hostId = (host as { id: string }).id;
+
+  for (const port of device.openPorts) {
+    await backendApi.upsertService({
+      host_id: hostId,
+      name: PORT_NAMES[port] ?? `port-${port}`,
+      port,
+      protocol: 'tcp',
+      bind_address: device.ip,
+      exposed_publicly: true,
+    });
+  }
+}
 
 async function runCollectionCycle(): Promise<void> {
   console.log('[worker] starting collection cycle');
@@ -42,6 +86,19 @@ async function runCollectionCycle(): Promise<void> {
     const segmentId = (segment as { id: string }).id;
     await backendApi.upsertHost({ ...hostInfo, network_segment_id: segmentId });
     console.log(`[worker] linked host to network segment ${primarySubnet} (${segmentId})`);
+
+    if (SUBNET_SCAN_ENABLED) {
+      console.log(`[worker] sweeping ${primarySubnet} for devices...`);
+      const rawDevices = await scanSubnet(primarySubnet);
+      // Exclude the worker's own IP — it's already tracked as the "worker"
+      // host above; without this it would also show up as a generic
+      // "device" duplicate of itself.
+      const devices = rawDevices.filter((d) => d.ip !== hostInfo.ip_address);
+      console.log(`[worker] discovered ${devices.length} device(s) on ${primarySubnet}`);
+      for (const device of devices) {
+        await registerDiscoveredDevice(device, segmentId);
+      }
+    }
   }
 
   const containers = await collectContainers();

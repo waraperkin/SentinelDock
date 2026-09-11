@@ -1,44 +1,13 @@
 import { apiGet } from '@/lib/api';
 import type { Host, Container, ServiceRecord, NetworkSegment } from '@/types/models';
+import { DataTable } from '@/components/DataTable';
 
-function Table({ title, headers, rows }: { title: string; headers: string[]; rows: (string | number)[][] }) {
-  return (
-    <div className="mb-8">
-      <h2 className="text-lg font-semibold mb-2">{title}</h2>
-      <div className="overflow-x-auto border border-slate-800 rounded-lg">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-900">
-            <tr>
-              {headers.map((h) => (
-                <th key={h} className="text-left px-3 py-2 text-slate-400 font-medium">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={headers.length} className="px-3 py-3 text-slate-500">
-                  No records
-                </td>
-              </tr>
-            )}
-            {rows.map((row, i) => (
-              <tr key={i} className="border-t border-slate-800">
-                {row.map((cell, j) => (
-                  <td key={j} className="px-3 py-2">
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
+const CRITICALITY_COLOR: Record<string, string> = {
+  low: 'text-[var(--sd-low)]',
+  medium: 'text-[var(--sd-medium)]',
+  high: 'text-[var(--sd-high)]',
+  critical: 'text-[var(--sd-critical)]',
+};
 
 export default async function InventoryPage() {
   const [hosts, containers, services, segments] = await Promise.all([
@@ -50,33 +19,71 @@ export default async function InventoryPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Inventory</h1>
-      <Table
+      <div className="mb-8">
+        <h1 className="text-[26px] font-display font-semibold text-[var(--sd-text-primary)]">Inventory</h1>
+        <p className="mt-1 text-sm text-[var(--sd-text-secondary)]">Hosts, containers, services, and network segments discovered across your environment.</p>
+      </div>
+      <DataTable
         title={`Hosts (${hosts.length})`}
         headers={['Hostname', 'OS', 'Role', 'Criticality', 'IP']}
-        rows={hosts.map((h) => [h.hostname, h.os ?? '-', h.role, h.criticality, h.ip_address ?? '-'])}
+        rows={hosts.map((h) => [
+          <span key="h" className="sd-mono">
+            {h.hostname}
+          </span>,
+          h.os ?? '—',
+          h.role,
+          <span key="c" className={`font-medium ${CRITICALITY_COLOR[h.criticality] ?? ''}`}>
+            {h.criticality}
+          </span>,
+          <span key="ip" className="sd-mono text-[var(--sd-text-secondary)]">
+            {h.ip_address ?? '—'}
+          </span>,
+        ])}
       />
-      <Table
+      <DataTable
         title={`Containers (${containers.length})`}
         headers={['Name', 'Image', 'Status', 'Privileged']}
-        rows={containers.map((c) => [c.name, c.image, c.status, c.privileged ? 'yes' : 'no'])}
+        rows={containers.map((c) => [
+          c.name,
+          <span key="i" className="sd-mono text-[var(--sd-text-secondary)]">
+            {c.image}
+          </span>,
+          c.status,
+          c.privileged ? <span className="text-[var(--sd-critical)] font-medium">yes</span> : 'no',
+        ])}
       />
-      <Table
+      <DataTable
         title={`Services (${services.length})`}
         headers={['Name', 'Port', 'Version', 'Bind Address', 'Exposed Publicly', 'Known CVEs']}
         rows={services.map((s) => [
           s.name,
-          s.port,
-          s.version ?? '-',
-          s.bind_address,
-          s.exposed_publicly ? 'yes' : 'no',
-          s.cve_ids.length > 0 ? s.cve_ids.join(', ') : '-',
+          <span key="p" className="sd-mono">
+            {s.port}
+          </span>,
+          s.version ?? '—',
+          <span key="b" className="sd-mono text-[var(--sd-text-secondary)]">
+            {s.bind_address}
+          </span>,
+          s.exposed_publicly ? <span className="text-[var(--sd-high)] font-medium">yes</span> : 'no',
+          s.cve_ids.length > 0 ? (
+            <span key="cve" className="sd-mono text-[var(--sd-critical)]">
+              {s.cve_ids.join(', ')}
+            </span>
+          ) : (
+            '—'
+          ),
         ])}
       />
-      <Table
+      <DataTable
         title={`Network Segments (${segments.length})`}
         headers={['Name', 'CIDR', 'Zone']}
-        rows={segments.map((s) => [s.name, s.cidr, s.zone])}
+        rows={segments.map((s) => [
+          s.name,
+          <span key="c" className="sd-mono">
+            {s.cidr}
+          </span>,
+          s.zone,
+        ])}
       />
     </div>
   );

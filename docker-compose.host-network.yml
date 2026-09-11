@@ -1,0 +1,13 @@
+# Optional override that gives the worker direct access to your real LAN so
+# subnet device discovery sweeps your actual network instead of just the
+# Docker bridge network. See README.md "Real subnet / LAN device discovery"
+# for platform caveats (this requires enabling Host Networking in Docker
+# Desktop's settings on Windows/Mac; it works natively on Linux).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.host-network.yml up -d --build
+services:
+  worker:
+    network_mode: host
+    environment:
+      BACKEND_API_URL: http://localhost:4000

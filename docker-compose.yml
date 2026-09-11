@@ -49,6 +49,7 @@ services:
     environment:
       BACKEND_API_URL: http://backend:4000
       WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-60000}
+      WORKER_HOSTNAME_OVERRIDE: ${WORKER_HOSTNAME_OVERRIDE:-sentineldock-worker}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
