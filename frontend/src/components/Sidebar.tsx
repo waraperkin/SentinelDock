@@ -51,6 +51,16 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    href: '/violations',
+    label: 'Violations',
+    icon: (
+      <Icon>
+        <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M10 6.5v4M10 13v.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </Icon>
+    ),
+  },
+  {
     href: '/risks',
     label: 'Risks',
     icon: (

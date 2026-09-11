@@ -2,7 +2,14 @@ import { apiGet } from '@/lib/api';
 import { SeverityBadge } from '@/components/SeverityBadge';
 import { SandboxSimulator } from '@/components/SandboxSimulator';
 import { SimulationCampaignRunner } from '@/components/SimulationCampaignRunner';
+import { ActionableList } from '@/components/ActionableList';
 import type { AttackPath, CloudPosture, IcsPosture, XdrDetection, RemediationPlan, SimulationCampaign, QuantumTrend, QuantumOutlier } from '@/types/models';
+
+const REMEDIATION_STATUS_OPTIONS = [
+  { value: 'in_progress', label: 'Start' },
+  { value: 'done', label: 'Mark done' },
+  { value: 'dismissed', label: 'Dismiss' },
+];
 
 function scoreColor(score: number): string {
   if (score >= 70) return '#ef4a5f';
@@ -104,23 +111,32 @@ export default async function GodmodePage() {
         <section>
           <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">Auto-Remediation — prioritized plans</h2>
           <div className="sd-panel divide-y divide-[var(--sd-border)]">
-            {remediation.slice(0, 10).map((r) => (
-              <div key={r.id} className="px-5 py-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <SeverityBadge severity={r.severity} />
-                  <span className="text-xs text-[var(--sd-text-muted)]">priority {r.priority}</span>
-                </div>
-                <p className="text-sm text-[var(--sd-text-primary)]">{r.title}</p>
-                <ol className="mt-1.5 space-y-0.5">
-                  {r.steps.map((step, i) => (
-                    <li key={i} className="text-xs text-[var(--sd-text-muted)]">
-                      {i + 1}. {step}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            ))}
-            {remediation.length === 0 && <p className="px-5 py-6 text-sm text-[var(--sd-text-muted)]">No open remediation plans.</p>}
+            <ActionableList
+              pathPrefix="/remediation/plans"
+              options={REMEDIATION_STATUS_OPTIONS}
+              hideWhenStatusLeaves="open"
+              emptyMessage="No open remediation plans."
+              initial={remediation.slice(0, 10).map((r) => ({
+                id: r.id,
+                status: r.status,
+                content: (
+                  <>
+                    <div className="flex items-center gap-2 mb-1">
+                      <SeverityBadge severity={r.severity} />
+                      <span className="text-xs text-[var(--sd-text-muted)]">priority {r.priority}</span>
+                    </div>
+                    <p className="text-sm text-[var(--sd-text-primary)]">{r.title}</p>
+                    <ol className="mt-1.5 space-y-0.5">
+                      {r.steps.map((step, i) => (
+                        <li key={i} className="text-xs text-[var(--sd-text-muted)]">
+                          {i + 1}. {step}
+                        </li>
+                      ))}
+                    </ol>
+                  </>
+                ),
+              }))}
+            />
           </div>
         </section>
       </div>

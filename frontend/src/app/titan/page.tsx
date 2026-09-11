@@ -1,6 +1,12 @@
 import { apiGet } from '@/lib/api';
 import { SeverityBadge } from '@/components/SeverityBadge';
+import { ActionableList } from '@/components/ActionableList';
 import type { TimelineEvent, TiMatch, UebaAnomaly, EdrDetection, SegmentationRecommendation, HardeningRecommendation } from '@/types/models';
+
+const RECOMMENDATION_STATUS_OPTIONS = [
+  { value: 'applied', label: 'Mark applied' },
+  { value: 'dismissed', label: 'Dismiss' },
+];
 
 const SOURCE_LABEL: Record<string, string> = {
   risk: 'Risk',
@@ -108,13 +114,22 @@ export default async function TitanPage() {
         <section>
           <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">Auto-segmentation recommendations</h2>
           <div className="sd-panel divide-y divide-[var(--sd-border)]">
-            {segReco.map((r) => (
-              <div key={r.id} className="px-5 py-3">
-                <p className="text-sm text-[var(--sd-text-primary)]">{r.recommendation}</p>
-                <p className="text-xs text-[var(--sd-text-muted)] mt-1">{r.rationale}</p>
-              </div>
-            ))}
-            {segReco.length === 0 && <p className="px-5 py-6 text-sm text-[var(--sd-text-muted)]">No open segmentation recommendations.</p>}
+            <ActionableList
+              pathPrefix="/segmentation/recommendations"
+              options={RECOMMENDATION_STATUS_OPTIONS}
+              hideWhenStatusLeaves="open"
+              emptyMessage="No open segmentation recommendations."
+              initial={segReco.map((r) => ({
+                id: r.id,
+                status: r.status,
+                content: (
+                  <>
+                    <p className="text-sm text-[var(--sd-text-primary)]">{r.recommendation}</p>
+                    <p className="text-xs text-[var(--sd-text-muted)] mt-1">{r.rationale}</p>
+                  </>
+                ),
+              }))}
+            />
           </div>
         </section>
       </div>
@@ -122,16 +137,25 @@ export default async function TitanPage() {
       <section>
         <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">Auto-hardening recommendations</h2>
         <div className="sd-panel divide-y divide-[var(--sd-border)]">
-          {hardenReco.map((r) => (
-            <div key={r.id} className="px-5 py-3">
-              <div className="flex items-center gap-2 mb-1">
-                <SeverityBadge severity={r.severity} />
-              </div>
-              <p className="text-sm text-[var(--sd-text-primary)]">{r.action}</p>
-              <p className="text-xs text-[var(--sd-text-muted)] mt-1">{r.rationale}</p>
-            </div>
-          ))}
-          {hardenReco.length === 0 && <p className="px-5 py-6 text-sm text-[var(--sd-text-muted)]">No open hardening recommendations.</p>}
+          <ActionableList
+            pathPrefix="/hardening/recommendations"
+            options={RECOMMENDATION_STATUS_OPTIONS}
+            hideWhenStatusLeaves="open"
+            emptyMessage="No open hardening recommendations."
+            initial={hardenReco.map((r) => ({
+              id: r.id,
+              status: r.status,
+              content: (
+                <>
+                  <div className="flex items-center gap-2 mb-1">
+                    <SeverityBadge severity={r.severity} />
+                  </div>
+                  <p className="text-sm text-[var(--sd-text-primary)]">{r.action}</p>
+                  <p className="text-xs text-[var(--sd-text-muted)] mt-1">{r.rationale}</p>
+                </>
+              ),
+            }))}
+          />
         </div>
       </section>
     </div>

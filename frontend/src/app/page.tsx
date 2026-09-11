@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { apiGet } from '@/lib/api';
 import type { DashboardSummary } from '@/types/models';
 
@@ -7,13 +8,14 @@ interface StatCardProps {
   icon: JSX.Element;
   accent?: 'default' | 'critical';
   hint?: string;
+  href?: string;
 }
 
-function StatCard({ label, value, icon, accent = 'default', hint }: StatCardProps) {
+function StatCard({ label, value, icon, accent = 'default', hint, href }: StatCardProps) {
   const isCritical = accent === 'critical' && Number(value) > 0;
-  return (
+  const content = (
     <div
-      className="sd-panel relative overflow-hidden p-5"
+      className="sd-panel relative overflow-hidden p-5 h-full"
       style={isCritical ? { boxShadow: '0 0 0 1px rgba(239,74,95,0.35), 0 0 32px -8px var(--sd-critical-glow)' } : undefined}
     >
       <div className="flex items-start justify-between">
@@ -24,6 +26,41 @@ function StatCard({ label, value, icon, accent = 'default', hint }: StatCardProp
         {value}
       </div>
       {hint && <div className="mt-2 text-xs text-[var(--sd-text-muted)]">{hint}</div>}
+    </div>
+  );
+  return href ? (
+    <Link href={href} className="block transition-opacity hover:opacity-90">
+      {content}
+    </Link>
+  ) : (
+    content
+  );
+}
+
+interface QuickLink {
+  href: string;
+  label: string;
+  description: string;
+}
+
+const QUICK_LINKS: QuickLink[] = [
+  { href: '/violations', label: 'Violations', description: 'Open policy violations awaiting review' },
+  { href: '/attack-paths', label: 'Attack Paths', description: 'Multi-layer traversal graph' },
+  { href: '/zero-trust', label: 'Zero Trust', description: 'Per-segment segmentation score' },
+  { href: '/titan', label: 'TITAN', description: 'Threat intel, UEBA, EDR, SIEM timeline' },
+  { href: '/godmode', label: 'GODMODE', description: 'Simulation, posture, XDR, remediation' },
+  { href: '/sovereign', label: 'SOVEREIGN', description: 'RBAC tokens & tenants' },
+];
+
+function QuickLinks() {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {QUICK_LINKS.map((link) => (
+        <Link key={link.href} href={link.href} className="sd-panel p-4 block transition-colors hover:border-[var(--sd-accent)]">
+          <div className="text-sm font-medium text-[var(--sd-text-primary)]">{link.label}</div>
+          <div className="text-xs text-[var(--sd-text-muted)] mt-1">{link.description}</div>
+        </Link>
+      ))}
     </div>
   );
 }
@@ -127,16 +164,19 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <StatCard label="Total Assets" value={summary.asset_count} icon={<IconGrid />} />
-        <StatCard label="Global Risk Score" value={summary.global_risk_score} icon={<IconGauge />} hint={band.label} />
-        <StatCard label="Open Violations" value={summary.open_violations} icon={<IconShieldAlert />} accent="critical" />
-        <StatCard label="Incident Scenarios" value={summary.incident_scenarios} icon={<IconFlame />} accent="critical" />
+        <StatCard label="Total Assets" value={summary.asset_count} icon={<IconGrid />} href="/inventory" />
+        <StatCard label="Global Risk Score" value={summary.global_risk_score} icon={<IconGauge />} hint={band.label} href="/risks" />
+        <StatCard label="Open Violations" value={summary.open_violations} icon={<IconShieldAlert />} accent="critical" href="/violations" />
+        <StatCard label="Incident Scenarios" value={summary.incident_scenarios} icon={<IconFlame />} accent="critical" href="/incidents" />
       </div>
-      <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Hosts" value={summary.hosts} icon={<IconServer />} />
-        <StatCard label="Containers" value={summary.containers} icon={<IconBox />} />
-        <StatCard label="Services" value={summary.services} icon={<IconPlug />} />
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <StatCard label="Hosts" value={summary.hosts} icon={<IconServer />} href="/inventory" />
+        <StatCard label="Containers" value={summary.containers} icon={<IconBox />} href="/inventory" />
+        <StatCard label="Services" value={summary.services} icon={<IconPlug />} href="/inventory" />
       </div>
+
+      <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">Explore</h2>
+      <QuickLinks />
     </div>
   );
 }
