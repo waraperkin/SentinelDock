@@ -54,9 +54,23 @@ const PORT_NAMES: Record<number, string> = {
 
 const ICS_PORTS = new Set([502, 102, 4840, 47808]);
 
-function inferDeviceRole(device: DiscoveredDevice): string {
+// NAS/storage appliances (Synology DSM, QNAP QTS, TrueNAS, ZimaOS,
+// VirtualDSM, Unraid, ...) commonly serve SMB/445 for file sharing, which
+// previously made inferDeviceRole() misclassify every one of them as
+// "windows-device" — port 445 alone is not evidence of Windows. Hostname
+// is a much stronger signal here (from NetBIOS/mDNS resolution) when it
+// matches a known NAS vendor/product naming pattern, so it's checked
+// first and overrides the port-based guess below.
+const NAS_HOSTNAME_PATTERN = /synology|qnap|nas[-_]|[-_]nas|zimaos|virtualdsm|truenas|freenas|unraid|diskstation|rackstation|openmediavault/i;
+
+function inferDeviceRole(device: DiscoveredDevice, hostname: string): string {
   if (device.openPorts.some((p) => ICS_PORTS.has(p))) return 'ics-device';
-  if (device.openPorts.includes(3389) || device.openPorts.includes(445)) return 'windows-device';
+  if (NAS_HOSTNAME_PATTERN.test(hostname)) return 'nas-device';
+  if (device.openPorts.includes(3389)) return 'windows-device';
+  // SMB/445 alone is ambiguous — Windows, Samba-on-Linux, and NAS
+  // appliances all serve it — so without a stronger signal (RDP, or the
+  // NAS hostname check above) this no longer guesses "windows-device".
+  if (device.openPorts.includes(445)) return 'smb-file-server';
   if (device.openPorts.includes(22)) return 'linux-device';
   if (device.openPorts.includes(9100)) return 'printer';
   if (device.openPorts.includes(62078)) return 'mobile-device';
@@ -81,11 +95,12 @@ async function registerDiscoveredDevice(device: DiscoveredDevice, segmentId: str
     scanNetbios(device.ip).catch(() => null),
   ]);
 
+  const hostname = netbios?.name ?? device.hostname ?? device.ip;
   const host = await backendApi.upsertHost({
-    hostname: netbios?.name ?? device.hostname ?? device.ip,
+    hostname,
     ip_address: device.ip,
     os: snmp?.sysDescr ?? null,
-    role: icsRole ?? inferDeviceRole(device),
+    role: icsRole ?? inferDeviceRole(device, hostname),
     criticality: deviceClass === 'ics' ? 'high' : 'medium',
     device_class: deviceClass,
     network_segment_id: segmentId,
