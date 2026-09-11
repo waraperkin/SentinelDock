@@ -57,6 +57,7 @@ export async function rebuildAttackPaths(): Promise<AttackPath[]> {
     let worstTarget: { type: string; id: string; severity: Severity } | null = null;
     let overallSeverity: Severity = entryRisk.severity;
     let privilegeEscalation = false;
+    const segmentsCrossed = new Set<string>();
 
     for (let depth = 0; depth < MAX_DEPTH && frontier.length > 0; depth++) {
       const next: Array<{ type: string; id: string }> = [];
@@ -75,6 +76,10 @@ export async function rebuildAttackPaths(): Promise<AttackPath[]> {
           next.push({ type: edge.type, id: edge.id });
 
           if (edge.type === 'container' && privilegedContainerIds.has(edge.id)) privilegeEscalation = true;
+          if (edge.type === 'host') {
+            const segmentId = hostById.get(edge.id)?.network_segment_id;
+            if (segmentId) segmentsCrossed.add(segmentId);
+          }
 
           const targetRisk = riskByAsset.get(edgeKey);
           const targetCriticality = edge.type === 'host' ? hostById.get(edge.id)?.criticality : undefined;
@@ -96,10 +101,18 @@ export async function rebuildAttackPaths(): Promise<AttackPath[]> {
     // critical regardless of what individual hop risks scored.
     if (privilegeEscalation) overallSeverity = 'critical';
 
+    // Reaching hosts across 2+ distinct network segments means the
+    // exposure isn't contained by segmentation at all — that's a
+    // materially worse finding than lateral movement within one segment.
+    const multiSegment = segmentsCrossed.size >= 2;
+    if (multiSegment) overallSeverity = worseSeverity(overallSeverity, 'high');
+
     const target = worstTarget ?? { type: 'service', id: entry.id, severity: entryRisk.severity };
-    const name = privilegeEscalation
-      ? `Exposure via ${entry.name} -> privilege escalation -> ${target.type}`
-      : `Exposure via ${entry.name} -> ${target.type}`;
+    const nameParts = [`Exposure via ${entry.name}`];
+    if (privilegeEscalation) nameParts.push('privilege escalation');
+    if (multiSegment) nameParts.push(`crosses ${segmentsCrossed.size} network segments`);
+    nameParts.push(target.type);
+    const name = nameParts.join(' -> ');
     const [row] = await query<AttackPath>(
       `INSERT INTO attack_paths (name, entry_asset_type, entry_asset_id, target_asset_type, target_asset_id, hops, blast_radius, severity)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,

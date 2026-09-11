@@ -276,10 +276,84 @@ prevents duplicate concurrent scans; it does **not** yet split work across
 replicas (e.g. one subnet per replica) — that needs dynamic replica
 membership tracking, which is a natural next step, not implemented here.
 
-**NVD/live CVE lookups, SNMP, LLDP, real cloud IAM API calls, and DevOps
-pipeline scanning are explicitly out of scope** in this iteration — see
-"Known limitations" below for why, rather than silently pretending they
-exist.
+## Ultra tier additions
+
+**SNMPv2c inventory** (`worker/src/collectors/snmpScanner.ts`) — a real
+UDP SNMP GET (hand-rolled minimal BER encoder, no external SNMP library)
+against the `public` community string for `sysDescr`/`sysObjectID`. SNMPv3
+(authenticated/encrypted) is not implemented — it needs USM key derivation
+this worker does not attempt.
+
+**mDNS service enumeration** (`worker/src/collectors/mdnsScanner.ts`) —
+real RFC 6762 discovery over UDP multicast (224.0.0.251:5353), the same
+mechanism Bonjour/Avahi use for printers, IoT devices, AirPlay, etc.
+
+**NetBIOS name queries** (`worker/src/collectors/netbiosScanner.ts`) — the
+same UDP 137 node-status query `nbtstat -a` sends, useful against legacy
+Windows devices and some embedded HMI panels.
+
+**Real BACnet/IP Who-Is/I-Am** (`worker/src/collectors/icsScanner.ts`) —
+replaced the previous TCP-only guess with the actual BACnet discovery
+mechanism over its native UDP transport, parsing the Device Instance
+number out of a real I-Am reply when present.
+
+**Modbus FC1/FC3 real register reads** — issues actual Read Coils / Read
+Holding Registers requests and reports the real byte count returned, not
+just an echoed transaction ID.
+
+**S7comm two-step handshake** — COTP Connection Request/Confirm followed
+by a real S7comm "Setup Communication" PDU. SZL-based device identity
+reads (function 0x04/0x0131) are not implemented — vendor-specific and
+easy to get subtly wrong by hand.
+
+**ICS device role classification** (`classifyIcsDevice`) — heuristic
+PLC/HMI/historian/gateway labeling from the combination of confirmed ICS
+protocols and other open ports (e.g. a web/RDP port alongside Modbus
+suggests an HMI, not a bare PLC).
+
+**Dynamic segmentation by gateway** — network segments now record the
+subnet's actual gateway (from `ip route`) in their description when one
+can be determined, rather than just the bare CIDR.
+
+**Read-only cloud IAM role enumeration** — when the AWS/GCP metadata
+service is reachable, lists the IAM role / service account **name**
+attached to the instance (the equivalent of `aws sts get-caller-identity`
+without credentials). It deliberately never fetches or uses the actual
+temporary access-key/secret/session-token the same endpoint would also
+return — doing that means acting as the compromised identity against real
+cloud APIs, which is an authorized-pentest action, not something an
+automated defensive scanner should do unprompted. An enumerated role name
+is treated as stronger evidence than mere reachability and escalates the
+host to critical criticality.
+
+**Known-exploited (KEV-style) flag + CVE chaining** — the static
+vulnerability rule set now marks specific CVEs as known-exploited (a small
+hand-curated echo of CISA's KEV catalog, not a live feed), boosting their
+risk score and severity beyond what CVSS alone implies. Independently, a
+host running 2+ vulnerable services gets an additional "CVE chaining" risk
+representing the compounded exploitability of chaining footholds across
+services on the same host without needing to pivot through the network.
+
+**Multi-segment lateral movement detection** — attack paths now track how
+many distinct network segments they cross; crossing 2+ escalates severity
+and selects a dedicated "segmentation failure" incident playbook, since
+that's a materially worse finding than movement contained within one
+segment.
+
+**DevOps/CI-CD exposure policy** — flags a publicly-reachable
+Jenkins/GitLab-Runner-named service or the Jenkins JNLP agent port (50000)
+as a supply-chain risk. Matched by name/known port, not a full CI/CD
+protocol fingerprint.
+
+**LLDP frame capture and full OPC-UA GetEndpoints enumeration remain
+explicitly out of scope** — LLDP needs raw Ethernet frame capture with
+elevated container privileges this project intentionally avoids
+requiring; full OPC-UA endpoint enumeration needs establishing a secure
+channel first per the binary protocol spec, which is genuinely complex to
+hand-roll correctly (a real OPC-UA client SDK is the right tool for that,
+not a hand-rolled parser). NVD live CVE lookups and real cloud IAM API
+calls (beyond read-only role-name enumeration) remain out of scope for
+the reasons described above — see "Known limitations" below.
 
 ## Known limitations
 
@@ -315,15 +389,18 @@ Beyond the five baseline examples, `policies/` also includes:
 9. `cloud-metadata-reachable.yaml` — the cloud instance metadata endpoint is reachable
 10. `iam-privileged-role-exposed.yaml` — a high/critical asset can reach cloud metadata (proxy signal to review its IAM role)
 11. `critical-host-flat-network.yaml` — a critical host with no dedicated management-segment isolation
+12. `devops-cicd-exposed.yaml` — a publicly-reachable CI/CD service (Jenkins/GitLab Runner)
 
 ## Risk categories
 
 Risks are computed from three independent signals — open policy
 violations (classified into `exposure` / `network` / `container` / `host`
-/ `ics` / `cloud` / `misconfiguration` by the triggering policy),
-known-vulnerable service versions (`vulnerability`, scored from CVSS), and
-detected secrets (`secrets`, scored from finding severity). An asset can
-carry risks in more than one category simultaneously.
+/ `ics` / `cloud` / `devops` / `misconfiguration` by the triggering
+policy), known-vulnerable service versions (`vulnerability`, scored from
+CVSS and boosted for known-exploited CVEs, plus a combined "CVE chaining"
+risk when a host runs 2+ independently vulnerable services), and detected
+secrets (`secrets`, scored from finding severity). An asset can carry
+risks in more than one category simultaneously.
 
 ## Incident playbooks
 

@@ -1,0 +1,29 @@
+key: devops-cicd-exposed
+name: CI/CD service exposed publicly
+description: >
+  A CI/CD orchestration service (Jenkins, GitLab Runner, or similar,
+  identified by name/banner or the Jenkins JNLP agent port) is reachable
+  publicly. CI/CD systems typically hold source code access, build
+  secrets, and deployment credentials — a compromised pipeline is a
+  direct path to supply-chain compromise.
+severity: critical
+recommendation: >
+  Restrict CI/CD tooling to an internal network or VPN-only access.
+  Rotate any credentials the pipeline has access to if exposure is
+  confirmed to have been exploitable.
+conditions:
+  target: service
+  all:
+    - field: exposed_publicly
+      operator: eq
+      value: true
+  any:
+    - field: name
+      operator: contains
+      value: jenkins
+    - field: name
+      operator: contains
+      value: gitlab-runner
+    - field: port
+      operator: eq
+      value: 50000

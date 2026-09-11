@@ -135,7 +135,8 @@ export interface Risk {
     | 'host'
     | 'ics'
     | 'cloud'
-    | 'secrets';
+    | 'secrets'
+    | 'devops';
   severity: Severity;
   score: number;
   summary: string;

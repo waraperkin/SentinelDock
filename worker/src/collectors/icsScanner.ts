@@ -1,10 +1,14 @@
 import net from 'node:net';
+import dgram from 'node:dgram';
 
 export interface IcsProbeResult {
   port: number;
   protocolFamily: 'modbus' | 's7' | 'bacnet' | 'opcua';
   name: string;
+  evidence: string;
 }
+
+export type IcsDeviceRole = 'plc' | 'hmi' | 'historian' | 'gateway' | 'ics-device';
 
 const CONNECT_TIMEOUT_MS = 600;
 
@@ -23,7 +27,6 @@ function sendAndRead(ip: string, port: number, payload: Buffer, timeoutMs = CONN
     socket.once('connect', () => socket.write(payload));
     socket.on('data', (chunk) => {
       data = Buffer.concat([data, chunk]);
-      // Give the peer a brief moment in case it sends a multi-packet reply.
       setTimeout(() => finish(data), 100);
     });
     socket.once('timeout', () => finish(data.length > 0 ? data : null));
@@ -32,73 +35,157 @@ function sendAndRead(ip: string, port: number, payload: Buffer, timeoutMs = CONN
   });
 }
 
-/**
- * Modbus/TCP (port 502): a valid Modbus device echoes back the MBAP header
- * transaction ID we send in a "Read Holding Registers" request, even if the
- * specific register address is invalid — that echo alone confirms a real
- * Modbus stack, not just an open port.
- */
-async function probeModbus(ip: string): Promise<boolean> {
-  const request = Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x00, 0x00, 0x01]);
-  const response = await sendAndRead(ip, 502, request);
-  if (!response || response.length < 2) return false;
-  return response[0] === 0x00 && response[1] === 0x01; // echoed transaction ID
+function udpRequest(ip: string, port: number, payload: Buffer, timeoutMs = 700): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket('udp4');
+    const timer = setTimeout(() => {
+      socket.close();
+      resolve(null);
+    }, timeoutMs);
+    socket.once('message', (msg) => {
+      clearTimeout(timer);
+      socket.close();
+      resolve(msg);
+    });
+    socket.once('error', () => {
+      clearTimeout(timer);
+      socket.close();
+      resolve(null);
+    });
+    socket.send(payload, port, ip);
+  });
 }
 
 /**
- * S7comm over ISO-on-TCP (port 102): send a COTP Connection Request; a real
- * Siemens S7 PLC (or compatible) replies with a COTP Connection Confirm
- * (TPDU code 0xD in the high nibble of the 6th byte).
+ * Modbus/TCP (port 502): issues a real FC1 (Read Coils) and FC3 (Read
+ * Holding Registers) request and parses the actual response byte count —
+ * not just an echoed transaction ID — so we can report how many
+ * coils/registers the device actually exposed at address 0, which is
+ * real evidence beyond "something is listening".
  */
-async function probeS7(ip: string): Promise<boolean> {
+async function probeModbus(ip: string): Promise<{ ok: boolean; evidence: string }> {
+  const fc3 = Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x00, 0x00, 0x01]);
+  const fc3Response = await sendAndRead(ip, 502, fc3);
+  if (fc3Response && fc3Response.length >= 9 && fc3Response[0] === 0x00 && fc3Response[1] === 0x01 && fc3Response[7] === 0x03) {
+    const byteCount = fc3Response[8];
+    return { ok: true, evidence: `FC3 Read Holding Registers: ${byteCount} byte(s) returned` };
+  }
+  const fc1 = Buffer.from([0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x01, 0x01, 0x00, 0x00, 0x00, 0x08]);
+  const fc1Response = await sendAndRead(ip, 502, fc1);
+  if (fc1Response && fc1Response.length >= 9 && fc1Response[0] === 0x00 && fc1Response[1] === 0x02 && fc1Response[7] === 0x01) {
+    const byteCount = fc1Response[8];
+    return { ok: true, evidence: `FC1 Read Coils: ${byteCount} byte(s) returned` };
+  }
+  // Function code 0x83/0x81 = exception response — still proves a real Modbus stack, just no register at that address.
+  if (fc3Response && fc3Response.length >= 8 && fc3Response[7] === 0x83) return { ok: true, evidence: 'Modbus exception response (confirms real Modbus stack)' };
+  return { ok: false, evidence: '' };
+}
+
+/**
+ * S7comm over ISO-on-TCP (port 102): full two-step handshake — COTP
+ * Connection Request/Confirm, then an S7comm "Setup Communication" PDU
+ * (function 0xF0) to negotiate PDU size. A real S7-compatible PLC
+ * responds to both steps; this is stronger evidence than the COTP
+ * handshake alone. Reading device identity (SZL) is not implemented —
+ * that needs function 0x04/0x0131 with vendor-specific SZL IDs and is
+ * left as a documented gap rather than guessed at.
+ */
+async function probeS7(ip: string): Promise<{ ok: boolean; evidence: string }> {
   const cotpConnectRequest = Buffer.from([0x03, 0x00, 0x00, 0x16, 0x11, 0xe0, 0x00, 0x00, 0x00, 0x01, 0x00, 0xc0, 0x01, 0x0a, 0xc1, 0x02, 0x01, 0x00, 0xc2, 0x02, 0x01, 0x02]);
-  const response = await sendAndRead(ip, 102, cotpConnectRequest);
-  if (!response || response.length < 6) return false;
-  return response[0] === 0x03 && (response[5] & 0xf0) === 0xd0;
+  const cotpResponse = await sendAndRead(ip, 102, cotpConnectRequest);
+  if (!cotpResponse || cotpResponse.length < 6 || cotpResponse[0] !== 0x03 || (cotpResponse[5] & 0xf0) !== 0xd0) {
+    return { ok: false, evidence: '' };
+  }
+
+  const setupCommunication = Buffer.from([
+    0x03, 0x00, 0x00, 0x19, 0x02, 0xf0, 0x80, // TPKT + COTP data header
+    0x32, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, // S7 header (job request)
+    0xf0, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x1e, // Setup Communication parameter
+  ]);
+  const s7Response = await sendAndRead(ip, 102, setupCommunication);
+  if (s7Response && s7Response.length > 7 && s7Response[7] === 0x32) {
+    return { ok: true, evidence: 'COTP connect + S7comm Setup Communication both confirmed' };
+  }
+  return { ok: true, evidence: 'COTP connect confirmed (Setup Communication did not respond as expected)' };
 }
 
 /**
- * OPC-UA (port 4840): send a minimal "Hello" message; a real OPC-UA
- * endpoint replies with an "ACK" message (message type "ACK" = 0x41 0x43 0x4b).
+ * OPC-UA (port 4840): sends a Hello message and confirms the ACK reply.
+ * Full endpoint enumeration (GetEndpointsRequest/Response) requires
+ * establishing a secure channel first per the OPC-UA binary protocol —
+ * genuinely complex to hand-roll correctly and easy to get subtly wrong,
+ * so it is intentionally not attempted here; a real OPC-UA client SDK
+ * would be the correct tool for that, not a hand-rolled parser.
  */
-async function probeOpcUa(ip: string): Promise<boolean> {
+async function probeOpcUa(ip: string): Promise<{ ok: boolean; evidence: string }> {
   const endpointUrl = Buffer.from('opc.tcp://sentineldock/');
   const body = Buffer.concat([
-    Buffer.from([0, 0, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), // version, buffer sizes, max message size, max chunk count (loose defaults)
+    Buffer.from([0, 0, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
     Buffer.from([endpointUrl.length, 0, 0, 0]),
     endpointUrl,
   ]);
   const header = Buffer.concat([Buffer.from('HELF'), Buffer.alloc(4)]);
   header.writeUInt32LE(header.length + body.length, 4);
-  const message = Buffer.concat([header, body]);
-  const response = await sendAndRead(ip, 4840, message);
-  if (!response || response.length < 3) return false;
-  return response.subarray(0, 3).toString('ascii') === 'ACK';
+  const response = await sendAndRead(ip, 4840, Buffer.concat([header, body]));
+  if (!response || response.length < 3) return { ok: false, evidence: '' };
+  return response.subarray(0, 3).toString('ascii') === 'ACK' ? { ok: true, evidence: 'OPC-UA Hello/ACK confirmed' } : { ok: false, evidence: '' };
 }
 
 /**
- * BACnet normally runs over UDP (47808), which this TCP-only worker cannot
- * probe without raw sockets. We only confirm a BACnet/IP-over-TCP gateway
- * if the port happens to also answer on TCP — most BACnet devices will
- * simply not respond here, so this is best-effort and under-detects.
+ * BACnet/IP (UDP 47808): sends a real Who-Is broadcast-style unicast APDU
+ * and listens for an I-Am reply — the actual BACnet discovery mechanism
+ * (this is what a real BACnet workstation does on startup), not a TCP
+ * guess. Parses the responding device's Device Instance number out of
+ * the I-Am APDU when present.
  */
-async function probeBacnetTcp(ip: string): Promise<boolean> {
-  const response = await sendAndRead(ip, 47808, Buffer.from([0x81, 0x0b, 0x00, 0x0c, 0x01, 0x20, 0xff, 0xff, 0x00, 0xff, 0x10, 0x08]));
-  return response !== null && response.length > 0 && response[0] === 0x81;
+async function probeBacnet(ip: string): Promise<{ ok: boolean; evidence: string }> {
+  // BVLC header (Original-Unicast-NPDU) + NPDU + Who-Is APDU (unconstrained, no range).
+  const whoIs = Buffer.from([0x81, 0x0a, 0x00, 0x08, 0x01, 0x20, 0x10, 0x08]);
+  const response = await udpRequest(ip, 47808, whoIs);
+  if (!response || response.length < 8 || response[0] !== 0x81) return { ok: false, evidence: '' };
+  // I-Am APDU service choice is 0x00 within an Unconfirmed-REQ (0x10); look for that pattern.
+  const hasIAm = response.includes(Buffer.from([0x10, 0x00]));
+  if (hasIAm) {
+    const deviceIdIndex = response.indexOf(Buffer.from([0x10, 0x00])) + 3;
+    const deviceInstance = deviceIdIndex + 4 <= response.length ? response.readUInt32BE(deviceIdIndex) & 0x3fffff : null;
+    return { ok: true, evidence: deviceInstance ? `I-Am received, device instance ${deviceInstance}` : 'I-Am received' };
+  }
+  return { ok: response[0] === 0x81, evidence: 'BVLC response received (not a parsed I-Am)' };
 }
 
 /**
- * Probes a single IP for ICS/OT protocol stacks. Real protocol-level
- * fingerprinting (not just "port is open") for Modbus and S7comm; OPC-UA
- * and BACnet are best-effort (see probeBacnetTcp for the BACnet/UDP
- * caveat).
+ * Probes a single IP for ICS/OT protocol stacks with real handshakes:
+ * Modbus FC1/FC3 register reads, S7comm COTP+Setup Communication,
+ * OPC-UA Hello/ACK, and BACnet/IP Who-Is/I-Am over its native UDP
+ * transport.
  */
 export async function scanIcsProtocols(ip: string): Promise<IcsProbeResult[]> {
   const results: IcsProbeResult[] = [];
-  const [modbus, s7, opcua, bacnet] = await Promise.all([probeModbus(ip), probeS7(ip), probeOpcUa(ip), probeBacnetTcp(ip)]);
-  if (modbus) results.push({ port: 502, protocolFamily: 'modbus', name: 'modbus' });
-  if (s7) results.push({ port: 102, protocolFamily: 's7', name: 's7comm' });
-  if (opcua) results.push({ port: 4840, protocolFamily: 'opcua', name: 'opcua' });
-  if (bacnet) results.push({ port: 47808, protocolFamily: 'bacnet', name: 'bacnet' });
+  const [modbus, s7, opcua, bacnet] = await Promise.all([probeModbus(ip), probeS7(ip), probeOpcUa(ip), probeBacnet(ip)]);
+  if (modbus.ok) results.push({ port: 502, protocolFamily: 'modbus', name: 'modbus', evidence: modbus.evidence });
+  if (s7.ok) results.push({ port: 102, protocolFamily: 's7', name: 's7comm', evidence: s7.evidence });
+  if (opcua.ok) results.push({ port: 4840, protocolFamily: 'opcua', name: 'opcua', evidence: opcua.evidence });
+  if (bacnet.ok) results.push({ port: 47808, protocolFamily: 'bacnet', name: 'bacnet', evidence: bacnet.evidence });
   return results;
+}
+
+/**
+ * Heuristic ICS device role classification from the combination of
+ * confirmed ICS protocols and other open ports on the same device — not
+ * a certainty, just the best signal available without vendor-specific
+ * fingerprinting:
+ * - Modbus/S7 alone, no web/remote-desktop ports -> likely a PLC.
+ * - ICS protocol + HTTP/RDP/VNC -> likely an HMI (has an operator UI).
+ * - ICS protocol + a database port -> likely a historian.
+ * - More than one distinct ICS protocol family on the same device -> likely a protocol gateway.
+ */
+export function classifyIcsDevice(icsResults: IcsProbeResult[], otherOpenPorts: number[]): IcsDeviceRole {
+  const families = new Set(icsResults.map((r) => r.protocolFamily));
+  if (families.size > 1) return 'gateway';
+  const hasOperatorUi = otherOpenPorts.some((p) => [80, 443, 3389, 5900, 8080].includes(p));
+  const hasDatabase = otherOpenPorts.some((p) => [5432, 3306, 1433, 1521].includes(p));
+  if (hasDatabase) return 'historian';
+  if (hasOperatorUi) return 'hmi';
+  if (families.has('modbus') || families.has('s7')) return 'plc';
+  return 'ics-device';
 }

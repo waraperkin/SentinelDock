@@ -22,6 +22,7 @@ test('categoryForViolation maps known policy keys to their category', () => {
   assert.equal(categoryForViolation(makeViolation({ policy_key: 'privileged-container', asset_type: 'container' })), 'container');
   assert.equal(categoryForViolation(makeViolation({ policy_key: 'outdated-os-critical-host', asset_type: 'host' })), 'host');
   assert.equal(categoryForViolation(makeViolation({ policy_key: 'ot-it-segmentation', asset_type: 'host' })), 'network');
+  assert.equal(categoryForViolation(makeViolation({ policy_key: 'devops-cicd-exposed', asset_type: 'service' })), 'devops');
 });
 
 test('categoryForViolation does not false-match substrings within a policy key', () => {

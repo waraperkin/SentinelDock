@@ -20,6 +20,33 @@ const GENERIC_STEPS: PlaybookSteps = {
 /** Category-specific playbook content, keyed by a substring match against the risk category/summary. */
 const SCENARIO_LIBRARY: Array<{ match: RegExp; title: string; steps: PlaybookSteps }> = [
   {
+    // Checked first, ahead of entry-point-specific scenarios (SSH, Docker,
+    // etc.) — a path that crosses network segments is a compounding,
+    // higher-severity finding than the entry point alone, regardless of
+    // what that entry point was.
+    match: /crosses \d+ network segments/i,
+    title: 'Lateral movement across network segments — segmentation failure',
+    steps: {
+      immediate: [
+        'Confirm which segments the path actually crossed and whether that crossing was intended by the network design.',
+        'Check firewall/ACL logs between the crossed segments for traffic matching this path during the exposure window.',
+      ],
+      containment: [
+        'Add or tighten the firewall rule between the crossed segments to block this specific path immediately.',
+        'Do not assume segmentation is working elsewhere just because this one path is blocked — audit other cross-segment rules.',
+      ],
+      eradication: [
+        'Fix the root cause: the dependency/exposure chain that allowed the crossing, not just this one instance of it.',
+        'Re-run the evaluation pipeline to confirm the attack path no longer crosses segments.',
+      ],
+      recovery: ['Re-enable only the specific, minimal cross-segment access actually required by the business.', 'Document the approved exception if any cross-segment access remains.'],
+      lessonsLearned: [
+        'Segmentation that can be bypassed via a single exposed service is not effective segmentation — review the network architecture.',
+        'Add a standing policy check for this specific segment pair if the crossing is a recurring risk.',
+      ],
+    },
+  },
+  {
     match: /ssh/i,
     title: 'SSH exposure / potential compromise',
     steps: {
@@ -233,7 +260,7 @@ export async function generateIncidentScenarios(): Promise<IncidentScenario[]> {
     const isRansomwareClass = risk.severity === 'critical' && (relatedPath?.blast_radius ?? 0) >= 3;
     const scenarioHaystack = isRansomwareClass
       ? 'ransomware-class widespread compromise'
-      : `${risk.summary} ${policyKeys.join(' ')}`;
+      : `${risk.summary} ${policyKeys.join(' ')} ${relatedPath?.name ?? ''}`;
     const scenario = selectScenario(scenarioHaystack, risk.category);
     const title = `${risk.severity.toUpperCase()}: ${scenario.title} (${risk.asset_type}:${risk.asset_id})`;
     const playbook = buildPlaybook(risk, relatedPath, scenario);

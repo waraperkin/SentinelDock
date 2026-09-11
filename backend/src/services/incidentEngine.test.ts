@@ -31,6 +31,11 @@ test('selectScenario matches known-vulnerability risks to the vulnerability play
   assert.equal(scenario.title, 'Known-vulnerable service version');
 });
 
+test('selectScenario matches an attack path name that crosses network segments', () => {
+  const scenario = selectScenario('Exposure via ssh -> crosses 3 network segments -> host', 'exposure');
+  assert.equal(scenario.title, 'Lateral movement across network segments — segmentation failure');
+});
+
 test('selectScenario falls back to a generic playbook for unmatched risks', () => {
   const scenario = selectScenario('1 open violation(s) ot-it-segmentation', 'network');
   assert.equal(scenario.title, 'network risk');

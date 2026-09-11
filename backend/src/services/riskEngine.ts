@@ -1,5 +1,7 @@
 import { query } from '../db/pool.js';
 import type { PolicyViolation, Risk, Severity, Host, ServiceRecord, SecretFinding } from '../types/models.js';
+import { isKnownExploited } from './vulnerabilityScanner.js';
+import { worseSeverity } from './attackPathEngine.js';
 
 const SEVERITY_WEIGHT: Record<Severity, number> = { low: 1, medium: 3, high: 6, critical: 10 };
 const CRITICALITY_MULTIPLIER: Record<Severity, number> = { low: 1, medium: 1.2, high: 1.5, critical: 2 };
@@ -25,6 +27,7 @@ const POLICY_KEY_CATEGORY: Record<string, Risk['category']> = {
   'ics-protocol-exposed': 'ics',
   'cloud-metadata-reachable': 'cloud',
   'iam-privileged-role-exposed': 'cloud',
+  'devops-cicd-exposed': 'devops',
 };
 
 export function categoryForViolation(violation: ViolationWithPolicyKey): Risk['category'] {
@@ -84,18 +87,46 @@ export async function recomputeRisks(): Promise<Risk[]> {
   }
 
   // Independent signal: known-vulnerable service versions, regardless of
-  // whether a policy also flagged the same asset.
+  // whether a policy also flagged the same asset. Exploit maturity (a
+  // KEV-style "known exploited" flag) boosts the score beyond what raw
+  // CVSS alone would give — a widely-exploited medium-CVSS bug is a more
+  // urgent real-world risk than an unexploited high-CVSS one.
   const vulnerableServices = await query<ServiceRecord>('SELECT * FROM services WHERE array_length(cve_ids, 1) > 0');
+  const vulnerableHostGroups = new Map<string, ServiceRecord[]>();
   for (const service of vulnerableServices) {
-    const severity = severityFromCvss(Number(service.cvss_score ?? 0));
-    const criticality: Severity = 'medium';
-    const score = Math.min(100, Number(service.cvss_score ?? 0) * 10 * CRITICALITY_MULTIPLIER[criticality]);
-    const summary = `Service "${service.name}" (v${service.version ?? 'unknown'}) matches known vulnerabilities: ${service.cve_ids.join(', ')}`;
+    const exploited = isKnownExploited(service.cve_ids);
+    const baseSeverity = severityFromCvss(Number(service.cvss_score ?? 0));
+    const severity = exploited ? worseSeverity(baseSeverity, 'high') : baseSeverity;
+    const exploitBoost = exploited ? 1.4 : 1.0;
+    const score = Math.min(100, Number(service.cvss_score ?? 0) * 10 * CRITICALITY_MULTIPLIER.medium * exploitBoost);
+    const summary = `Service "${service.name}" (v${service.version ?? 'unknown'}) matches known vulnerabilities: ${service.cve_ids.join(', ')}${
+      exploited ? ' — actively exploited in the wild' : ''
+    }`;
 
     const [row] = await query<Risk>(
       `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
        VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
       ['service', service.id, 'vulnerability', severity, score, summary],
+    );
+    results.push(row);
+
+    if (service.host_id) vulnerableHostGroups.set(service.host_id, [...(vulnerableHostGroups.get(service.host_id) ?? []), service]);
+  }
+
+  // CVE chaining / multi-hop exposure: a host running 2+ independently
+  // vulnerable services is a materially different (higher) risk than the
+  // sum of its parts — an attacker can chain footholds across services on
+  // the same host without needing to pivot through the network at all.
+  for (const [hostId, servicesOnHost] of vulnerableHostGroups) {
+    if (servicesOnHost.length < 2) continue;
+    const allCveIds = servicesOnHost.flatMap((s) => s.cve_ids);
+    const criticality = hostById.get(hostId)?.criticality ?? 'medium';
+    const score = Math.min(100, 40 + servicesOnHost.length * 15 * CRITICALITY_MULTIPLIER[criticality]);
+    const summary = `${servicesOnHost.length} independently vulnerable services chainable on this host (${servicesOnHost.map((s) => s.name).join(', ')}) — combined CVEs: ${allCveIds.join(', ')}`;
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
+      ['host', hostId, 'vulnerability', 'critical', score, summary],
     );
     results.push(row);
   }
