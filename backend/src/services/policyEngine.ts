@@ -111,13 +111,54 @@ function enrichService(
 }
 
 /**
+ * Resolves the owning host id for any asset reference (host/container/service),
+ * so a scoped (per-segment) evaluation run can tell whether a given
+ * violation belongs to its scope without re-deriving the relation ad hoc
+ * at every call site.
+ */
+function ownerHostId(
+  assetType: string,
+  assetId: string,
+  containerById: Map<string, Container>,
+  serviceById: Map<string, ServiceRecord>,
+): string | undefined {
+  if (assetType === 'host') return assetId;
+  if (assetType === 'container') return containerById.get(assetId)?.host_id;
+  if (assetType === 'service') {
+    const service = serviceById.get(assetId);
+    if (!service) return undefined;
+    return service.host_id ?? (service.container_id ? containerById.get(service.container_id)?.host_id : undefined);
+  }
+  return undefined;
+}
+
+/**
  * Evaluates all enabled policies against current inventory + configs and
  * persists PolicyViolation rows. Existing open violations for assets that no
  * longer match are marked resolved (idempotent re-evaluation).
+ *
+ * `scopeHostIds`, when provided, restricts both detection and stale-
+ * violation resolution to hosts in that set (and their containers/
+ * services) — this is what powers segment-scoped distributed evaluation
+ * (see distributedEvaluationEngine.ts): violations outside the scope are
+ * left completely untouched by this call, so multiple scoped calls across
+ * different host sets are safe to run independently/sequentially without
+ * clobbering each other's results.
  */
-export async function evaluatePolicies(): Promise<PolicyViolation[]> {
+export async function evaluatePolicies(scopeHostIds?: Set<string>): Promise<PolicyViolation[]> {
   const policies = await query<Policy>('SELECT * FROM policies WHERE enabled = true');
-  const { hosts, containers, services, hostById, containerById, segmentById, deviceClassesBySegment } = await buildEvaluationContext();
+  const { hosts: allHosts, containers: allContainers, services: allServices, hostById, containerById, segmentById, deviceClassesBySegment } =
+    await buildEvaluationContext();
+  const serviceById = new Map(allServices.map((s) => [s.id, s]));
+
+  const hosts = scopeHostIds ? allHosts.filter((h) => scopeHostIds.has(h.id)) : allHosts;
+  const containers = scopeHostIds ? allContainers.filter((c) => scopeHostIds.has(c.host_id)) : allContainers;
+  const services = scopeHostIds
+    ? allServices.filter((s) => {
+        const owner = ownerHostId('service', s.id, containerById, serviceById);
+        return owner ? scopeHostIds.has(owner) : false;
+      })
+    : allServices;
 
   const freshDetections: Array<{ policy: Policy; assetType: string; assetId: string; details: Record<string, unknown> }> = [];
 
@@ -152,8 +193,17 @@ export async function evaluatePolicies(): Promise<PolicyViolation[]> {
     }
   }
 
-  // Resolve violations whose (policy, asset) pair is no longer detected.
-  const openViolations = await query<PolicyViolation>("SELECT * FROM policy_violations WHERE status = 'open'");
+  // Resolve violations whose (policy, asset) pair is no longer detected —
+  // scoped to in-scope violations only when scopeHostIds is set, so a
+  // segment-scoped run never touches another segment's open violations.
+  const allOpenViolations = await query<PolicyViolation>("SELECT * FROM policy_violations WHERE status = 'open'");
+  const openViolations = scopeHostIds
+    ? allOpenViolations.filter((v) => {
+        const owner = ownerHostId(v.asset_type, v.asset_id, containerById, serviceById);
+        return owner ? scopeHostIds.has(owner) : false;
+      })
+    : allOpenViolations;
+
   const freshKeys = new Set(freshDetections.map((d) => `${d.policy.id}:${d.assetType}:${d.assetId}`));
   for (const violation of openViolations) {
     const key = `${violation.policy_id}:${violation.asset_type}:${violation.asset_id}`;

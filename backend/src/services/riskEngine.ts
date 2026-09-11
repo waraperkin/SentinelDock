@@ -1,7 +1,8 @@
 import { query } from '../db/pool.js';
-import type { PolicyViolation, Risk, Severity, Host, ServiceRecord, SecretFinding } from '../types/models.js';
+import type { PolicyViolation, Risk, Severity, Host, ServiceRecord, SecretFinding, TiMatch, EdrDetection } from '../types/models.js';
 import { isKnownExploited } from './vulnerabilityScanner.js';
 import { worseSeverity } from './attackPathEngine.js';
+import { recentUebaAnomalies } from './uebaEngine.js';
 
 const SEVERITY_WEIGHT: Record<Severity, number> = { low: 1, medium: 3, high: 6, critical: 10 };
 const CRITICALITY_MULTIPLIER: Record<Severity, number> = { low: 1, medium: 1.2, high: 1.5, critical: 2 };
@@ -228,6 +229,55 @@ export async function recomputeRisks(): Promise<Risk[]> {
       );
       results.push(row);
     }
+  }
+
+  // TITAN: Threat Intelligence Local Engine matches (see threatIntelEngine.ts)
+  // — a service matching a known-malicious port pattern or a CVE tied to a
+  // named real-world campaign is a stronger, more specific signal than raw
+  // CVSS/exposure alone.
+  const tiMatches = await query<TiMatch>('SELECT * FROM ti_matches');
+  for (const match of tiMatches) {
+    const score = match.severity === 'critical' ? 90 : match.severity === 'high' ? 70 : 45;
+    const summary = `Threat intelligence match: ${match.label} (${match.indicator_kind === 'malicious_port' ? `port ${match.indicator_value}` : match.indicator_value})`;
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ($1, $2, 'threat-intel', $3, $4, $5, '{}') RETURNING *`,
+      [match.asset_type, match.asset_id, match.severity, score, summary],
+    );
+    results.push(row);
+  }
+
+  // TITAN: UEBA-lite anomalies (see uebaEngine.ts) — a host deviating from
+  // its own established baseline (new port, sudden service growth) within
+  // the recent window is scored as an independent "anomaly" risk.
+  const uebaAnomalies = await recentUebaAnomalies(24);
+  for (const anomaly of uebaAnomalies) {
+    const score = anomaly.severity === 'high' ? 55 : 35;
+    const summary =
+      anomaly.kind === 'new-service-port'
+        ? `Behavioral anomaly: host exposed new port(s) not seen in its recent baseline (${JSON.stringify((anomaly.details as { new_ports?: number[] }).new_ports ?? [])})`
+        : `Behavioral anomaly: host's service count spiked relative to its recent baseline`;
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ('host', $1, 'anomaly', $2, $3, $4, '{}') RETURNING *`,
+      [anomaly.host_id, anomaly.severity, score, summary],
+    );
+    results.push(row);
+  }
+
+  // TITAN: EDR-lite behavioral detections (see edrEngine.ts) — agentless
+  // heuristics (suspicious listener ports, cryptojacking-named container
+  // images, privileged containers on ICS hosts) scored as "behavioral" risk.
+  const edrDetections = await query<EdrDetection>('SELECT * FROM edr_detections');
+  for (const detection of edrDetections) {
+    const score = detection.severity === 'critical' ? 88 : detection.severity === 'high' ? 68 : 42;
+    const summary = `Agentless behavioral detection: ${detection.kind.replace(/-/g, ' ')} (${JSON.stringify(detection.details)})`;
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ($1, $2, 'behavioral', $3, $4, $5, '{}') RETURNING *`,
+      [detection.asset_type, detection.asset_id, detection.severity, score, summary],
+    );
+    results.push(row);
   }
 
   return results;

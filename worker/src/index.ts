@@ -397,17 +397,25 @@ async function runCollectionCycle(): Promise<void> {
 }
 
 /**
- * Runs the shared evaluation pipeline (policy evaluation -> risks ->
- * attack paths -> incidents -> auto-policy gap detection). Gated by the
+ * Runs the shared evaluation pipeline (policy evaluation -> vulnerabilities
+ * -> TI/UEBA/EDR -> risks -> attack paths -> incidents -> segmentation/
+ * hardening recommendations -> auto-policy gap detection). Gated by the
  * Redis leader lock — unlike subnet sweeping, this reads/writes global
  * derived state (risks, attack paths) that every replica would otherwise
  * redundantly recompute from the same underlying inventory. Exactly one
  * replica per cycle does this; the others skip it (their collection work
  * from this same tick already landed in the shared backend either way).
+ *
+ * Uses the TITAN Distributed Evaluation Engine endpoint
+ * (POST /policies/evaluate/distributed), which partitions violation
+ * detection per network segment before running the shared downstream
+ * pipeline — see distributedEvaluationEngine.ts on the backend for why
+ * that partitioning is a genuine map/reduce split rather than a fake
+ * multi-node claim.
  */
 async function runEvaluation(): Promise<unknown> {
-  const summary = await backendApi.triggerEvaluation();
-  console.log('[worker] evaluation complete', summary);
+  const summary = await backendApi.triggerDistributedEvaluation();
+  console.log('[worker] distributed evaluation complete', summary);
   try {
     const proposed = await backendApi.autoGeneratePolicies();
     if (Array.isArray(proposed) && proposed.length > 0) {

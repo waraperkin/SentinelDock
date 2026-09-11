@@ -493,6 +493,83 @@ for combinations already proposed or already covered by a real policy).
 The worker calls this once per leader evaluation cycle, non-fatally on
 failure.
 
+## TITAN tier additions
+
+**Threat Intelligence Local Engine (TI-local)** (`backend/src/services/threatIntelEngine.ts`,
+`GET /ti/matches`) — a small hand-curated LOCAL dataset, never a live feed
+against an external TI provider: known malicious/backdoor/cryptomining
+listener ports (Metasploit/Cobalt Strike default 4444, classic backdoor
+ports, Stratum mining ports) and a curated map of CVE -> named real-world
+campaign (e.g. CVE-2017-0144 -> EternalBlue/WannaCry/NotPetya,
+CVE-2022-0543 -> the Muhstik botnet), layered on top of the existing
+`isKnownExploited` flag in `vulnerabilityScanner.ts` rather than
+duplicating it. Matches persist to `ti_matches` and feed a dedicated
+`threat-intel` risk category.
+
+**UEBA-lite** (`backend/src/services/uebaEngine.ts`, `GET /ueba/anomalies`) —
+a deterministic baseline-deviation detector, explicitly not a
+statistical/ML anomaly model. Each host gets a rolling baseline of its
+observed service ports (`ueba_baselines`); each evaluation cycle compares
+current state against that baseline and flags concrete, explainable
+deviations (`new-service-port`, `service-count-spike`) rather than an
+opaque anomaly score. "Entity" here means host, since this platform has
+no user/session telemetry to analyze — real UEBA covers user behavior,
+this is honestly scoped to asset behavior.
+
+**EDR-lite** (`backend/src/services/edrEngine.ts`, `GET /edr/detections`) —
+behavioral detection without deploying any agent on monitored hosts. Real
+EDR inspects process trees/syscalls/memory; this is scoped to what the
+worker's remote, read-only collection can actually support: known
+malicious listener ports, container images matching cryptojacking-tooling
+name patterns (xmrig, kinsing, etc.), and a privileged container running
+on an ICS-classified host. A heuristic signal, not a host-agent
+replacement.
+
+**SIEM-lite** (`backend/src/services/siemEngine.ts`, `GET /siem/timeline`) —
+event correlation over SentinelDock's own structured detection tables
+(risks, violations, secrets, TI matches, UEBA anomalies, EDR detections),
+NOT a general-purpose log SIEM (no raw log ingestion/parsing pipeline).
+Events on the same asset within a 10-minute window are grouped into a
+`cluster_id` so the timeline reads as "what happened to this asset around
+this time" rather than a flat chronological dump.
+
+**Auto-Segmentation Engine** (`backend/src/services/segmentationEngine.ts`,
+`GET/PATCH /segmentation/recommendations`) — produces RECOMMENDATIONS
+only; it never moves a host or edits a network segment. Reuses the same
+mixed-device-class-per-segment signal that powers the Zero Trust score,
+turning it into a concrete per-host "move X to a dedicated segment"
+recommendation with a suggested target zone.
+
+**Auto-Hardening Engine** (`backend/src/services/hardeningEngine.ts`,
+`GET/PATCH /hardening/recommendations`) — also recommendations only.
+Maps each open risk's underlying policy key (or, as a fallback, its risk
+category) to a concrete, actionable hardening step via a static lookup
+table, rather than leaving the operator to derive "what do I actually do
+about this" from a risk score alone.
+
+**Attack Graph TITAN** (`GET /attack-paths/graph/titan`) — the same
+multi-layer graph from the roadmap cycle, decorated per node with TI hit
+count, recent (24h) UEBA anomaly count for the owning host, EDR detection
+count, and — for service nodes — an exploitability score reusing
+`vulnerabilityScanner.ts`'s curated rule set. Turns the graph into a
+prioritization view on top of the topology, without adding any new
+detection logic of its own.
+
+**Distributed Evaluation Engine** (`backend/src/services/distributedEvaluationEngine.ts`,
+`POST /policies/evaluate/distributed`) — honestly framed: this backend
+runs as a single process, so "distributed" means evaluation work is
+*partitioned by network segment* (the map step), which is the same
+partitioning primitive a real multi-instance deployment would use to
+spread evaluation load. `evaluatePolicies(scopeHostIds)` in
+`policyEngine.ts` never touches violations outside its given host scope,
+so each segment's run is safe to execute independently. Downstream
+aggregation (risk scoring, attack-path/incident rebuilding, TI/UEBA/EDR/
+segmentation/hardening) inherently needs a whole-graph view — a CVE-
+chaining risk or a cross-segment attack path cannot be computed from one
+segment alone — so that stays centralized (the reduce step). The worker's
+leader now calls this endpoint every cycle instead of the plain
+`/policies/evaluate`.
+
 ## Known limitations
 
 - The attack-path builder is a simple BFS heuristic over the `dependencies`

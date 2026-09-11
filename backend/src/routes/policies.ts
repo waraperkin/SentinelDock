@@ -7,6 +7,45 @@ import { generateIncidentScenarios } from '../services/incidentEngine.js';
 import { scanVulnerabilities } from '../services/vulnerabilityScanner.js';
 import { recordAudit } from '../services/audit.js';
 import { autoGeneratePolicies } from '../services/autoPolicyGenerator.js';
+import { scanThreatIntel } from '../services/threatIntelEngine.js';
+import { computeUebaAnomalies } from '../services/uebaEngine.js';
+import { scanEdrSignals } from '../services/edrEngine.js';
+import { generateSegmentationRecommendations } from '../services/segmentationEngine.js';
+import { generateHardeningRecommendations } from '../services/hardeningEngine.js';
+import { evaluatePoliciesBySegment } from '../services/distributedEvaluationEngine.js';
+
+/**
+ * The shared downstream pipeline that must run after policy violations are
+ * up to date, regardless of whether violation detection itself ran
+ * globally (`evaluatePolicies()`) or partitioned by segment
+ * (`evaluatePoliciesBySegment()`, see distributedEvaluationEngine.ts).
+ * These stages inherently need a whole-graph view (CVE chaining across a
+ * host's services, cross-segment attack paths), so they always run
+ * centralized — see the "reduce" side of the map/reduce framing in
+ * distributedEvaluationEngine.ts.
+ */
+async function runDownstreamPipeline() {
+  const vulnerabilities = await scanVulnerabilities();
+  const tiMatches = await scanThreatIntel();
+  const uebaAnomalies = await computeUebaAnomalies();
+  const edrDetections = await scanEdrSignals();
+  const risks = await recomputeRisks();
+  const attackPaths = await rebuildAttackPaths();
+  const incidents = await generateIncidentScenarios();
+  const segmentationRecommendations = await generateSegmentationRecommendations();
+  const hardeningRecommendations = await generateHardeningRecommendations();
+  return {
+    vulnerabilities: vulnerabilities.length,
+    ti_matches: tiMatches.length,
+    ueba_anomalies: uebaAnomalies.length,
+    edr_detections: edrDetections.length,
+    risks: risks.length,
+    attack_paths: attackPaths.length,
+    incident_scenarios: incidents.length,
+    segmentation_recommendations: segmentationRecommendations.length,
+    hardening_recommendations: hardeningRecommendations.length,
+  };
+}
 
 export async function policyRoutes(app: FastifyInstance) {
   app.get('/policies', async () => query('SELECT * FROM policies ORDER BY severity DESC, key'));
@@ -48,21 +87,26 @@ export async function policyRoutes(app: FastifyInstance) {
     return reply.code(204).send();
   });
 
-  // Runs the full evaluation pipeline: violations -> vulnerabilities -> risks -> attack paths -> incidents.
+  // Runs the full evaluation pipeline: violations -> vulnerabilities -> TI
+  // -> UEBA -> EDR -> risks -> attack paths -> incidents -> segmentation ->
+  // hardening. Violation detection runs globally in one pass.
   app.post('/policies/evaluate', async (req) => {
     const violations = await evaluatePolicies();
-    const vulnerabilities = await scanVulnerabilities();
-    const risks = await recomputeRisks();
-    const attackPaths = await rebuildAttackPaths();
-    const incidents = await generateIncidentScenarios();
-    const summary = {
-      violations: violations.length,
-      vulnerabilities: vulnerabilities.length,
-      risks: risks.length,
-      attack_paths: attackPaths.length,
-      incident_scenarios: incidents.length,
-    };
+    const downstream = await runDownstreamPipeline();
+    const summary = { violations: violations.length, ...downstream };
     await recordAudit('policies.evaluate', req.actor ?? 'api-token', summary);
+    return summary;
+  });
+
+  // TITAN: Distributed Evaluation Engine — same downstream pipeline, but
+  // violation detection is partitioned per network segment first (see
+  // distributedEvaluationEngine.ts for why this is an honest "map" step
+  // rather than a real multi-node claim).
+  app.post('/policies/evaluate/distributed', async (req) => {
+    const segmentResult = await evaluatePoliciesBySegment();
+    const downstream = await runDownstreamPipeline();
+    const summary = { ...segmentResult, ...downstream };
+    await recordAudit('policies.evaluate.distributed', req.actor ?? 'api-token', summary);
     return summary;
   });
 

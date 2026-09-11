@@ -32,5 +32,6 @@ export const backendApi = {
   heartbeat: (payload: Record<string, unknown>) => request('/workers/heartbeat', 'POST', payload),
   listWorkers: () => request<Array<{ worker_id: string; online: boolean }>>('/workers', 'GET'),
   triggerEvaluation: () => request('/policies/evaluate', 'POST'),
+  triggerDistributedEvaluation: () => request('/policies/evaluate/distributed', 'POST'),
   autoGeneratePolicies: () => request('/policies/auto-generate', 'POST'),
 };

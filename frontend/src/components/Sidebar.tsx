@@ -119,6 +119,16 @@ const NAV_ITEMS: NavItem[] = [
       </Icon>
     ),
   },
+  {
+    href: '/titan',
+    label: 'TITAN',
+    icon: (
+      <Icon>
+        <path d="M10 2.5 3 6.5v5.2c0 3.6 3 6.9 7 8.3 4-1.4 7-4.7 7-8.3V6.5l-7-4Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M7 10.2 9.2 12.4 13.2 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </Icon>
+    ),
+  },
 ];
 
 export function Sidebar() {

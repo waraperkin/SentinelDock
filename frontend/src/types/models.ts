@@ -137,6 +137,70 @@ export interface SegmentZeroTrustScore {
   reasons: string[];
 }
 
+export interface TiMatch {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  indicator_kind: 'malicious_port' | 'targeted_cve';
+  indicator_value: string;
+  label: string;
+  severity: Severity;
+  detected_at: string;
+}
+
+export interface UebaAnomaly {
+  id: string;
+  host_id: string;
+  kind: 'new-service-port' | 'service-count-spike';
+  details: Record<string, unknown>;
+  severity: Severity;
+  detected_at: string;
+}
+
+export interface EdrDetection {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  kind: string;
+  details: Record<string, unknown>;
+  severity: Severity;
+  detected_at: string;
+}
+
+export interface SegmentationRecommendation {
+  id: string;
+  segment_id: string;
+  host_id?: string | null;
+  recommendation: string;
+  rationale: string;
+  target_zone?: string | null;
+  status: 'open' | 'applied' | 'dismissed';
+  created_at: string;
+}
+
+export interface HardeningRecommendation {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  risk_id?: string | null;
+  action: string;
+  rationale: string;
+  severity: Severity;
+  status: 'open' | 'applied' | 'dismissed';
+  created_at: string;
+}
+
+export interface TimelineEvent {
+  id: string;
+  source: 'risk' | 'violation' | 'secret' | 'ti' | 'ueba' | 'edr';
+  asset_type: string;
+  asset_id: string;
+  severity: Severity;
+  summary: string;
+  occurred_at: string;
+  cluster_id: string;
+}
+
 export interface DashboardSummary {
   asset_count: number;
   hosts: number;
