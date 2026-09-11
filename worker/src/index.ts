@@ -12,7 +12,7 @@ import { scanNetbios } from './collectors/netbiosScanner.js';
 import { discoverMdnsServices } from './collectors/mdnsScanner.js';
 import { httpRecon } from './collectors/httpReconScanner.js';
 import { backendApi } from './services/apiClient.js';
-import { withCollectionCycleLock, workerId } from './services/distributedLock.js';
+import { withCollectionCycleLock, workerId, shardWorkItems } from './services/distributedLock.js';
 
 const HTTP_LIKE_PORTS = new Set([80, 443, 8080, 8443]);
 
@@ -116,15 +116,31 @@ async function registerDiscoveredDevice(device: DiscoveredDevice, segmentId: str
       }
     }
 
-    await backendApi.upsertService({
+    const service = await backendApi.upsertService({
       host_id: hostId,
       name,
       port,
       protocol: 'tcp',
       bind_address: device.ip,
+      banner: ics?.deviceIdentity ?? null,
       exposed_publicly: true,
       protocol_family: protocolFamily,
     });
+    const serviceId = (service as { id?: string }).id;
+
+    // Risk-only heuristic, never a real write: if the device answered a
+    // standard read request without any authentication/restriction, it
+    // likely also accepts write function codes/services. Recorded as a
+    // config snapshot for the risk engine to score — we never send an
+    // actual Modbus FC5/FC6 or BACnet WriteProperty to any device.
+    if (ics?.likelyAcceptsWrites && serviceId) {
+      await backendApi.submitConfigSnapshot({
+        asset_type: 'service',
+        asset_id: serviceId,
+        kind: 'ics-write-risk',
+        data: { host_id: hostId, port, protocol_family: ics.protocolFamily, note: 'Read access unauthenticated; write function codes were not tested but are plausibly accepted.' },
+      });
+    }
   }
 }
 
@@ -250,7 +266,7 @@ function findGatewayForSubnet(routes: Array<{ destination: string; gateway: stri
   return routes.find((r) => r.destination === 'default' && r.gateway)?.gateway ?? null;
 }
 
-async function runCollectionCycle(): Promise<unknown> {
+async function runCollectionCycle(): Promise<void> {
   console.log('[worker] starting collection cycle');
 
   const hostInfo = collectHost();
@@ -292,19 +308,34 @@ async function runCollectionCycle(): Promise<unknown> {
     primarySegmentId = (segment as { id: string }).id;
     await backendApi.upsertHost({ ...hostInfo, network_segment_id: primarySegmentId });
     console.log(`[worker] linked host to network segment ${primarySubnet} (${primarySegmentId})`);
-
-    if (SUBNET_SCAN_ENABLED) {
-      // Exclude the worker's own IP — it's already tracked as the "worker"
-      // host above; without this it would also show up as a generic
-      // "device" duplicate of itself.
-      await sweepSubnet(primarySubnet, `Auto-discovered from ${hostInfo.hostname}'s network interfaces`, hostInfo.ip_address as string | null, gateway);
-    }
   }
 
-  if (SUBNET_SCAN_ENABLED && EXPLICIT_SCAN_SUBNETS.length > 0) {
-    for (const cidr of EXPLICIT_SCAN_SUBNETS) {
-      if (subnets.includes(cidr)) continue; // already swept above
-      await sweepSubnet(cidr, 'Configured via WORKER_SCAN_SUBNETS', null, findGatewayForSubnet(routes, cidr));
+  if (SUBNET_SCAN_ENABLED) {
+    // Real distributed work-splitting: when scaled to N replicas
+    // (`docker compose up -d --scale worker=N`), each replica sweeps only
+    // its shard of the full subnet list instead of every replica sweeping
+    // everything (the old single-leader model) or all replicas
+    // redundantly sweeping the same subnets. Every replica computes the
+    // same partition independently from the shared `/workers` fleet
+    // registry — no extra coordination round-trip needed per subnet.
+    const allTargetSubnets = Array.from(new Set([...(subnets.length > 0 ? [subnets[0]] : []), ...EXPLICIT_SCAN_SUBNETS]));
+    let onlineWorkerIds: string[] = [];
+    try {
+      const fleet = await backendApi.listWorkers();
+      onlineWorkerIds = fleet.filter((w) => w.online).map((w) => w.worker_id);
+    } catch {
+      /* fleet lookup failed — shardWorkItems fails open (claims everything) when the fleet list is empty */
+    }
+    const mySubnets = shardWorkItems(allTargetSubnets, (cidr) => cidr, onlineWorkerIds);
+    if (mySubnets.length < allTargetSubnets.length) {
+      console.log(`[worker] work-splitting: sweeping ${mySubnets.length}/${allTargetSubnets.length} subnet(s) (fleet size ${onlineWorkerIds.length})`);
+    }
+
+    for (const cidr of mySubnets) {
+      const isPrimary = subnets[0] === cidr;
+      const excludeIp = isPrimary ? (hostInfo.ip_address as string | null) : null;
+      const description = isPrimary ? `Auto-discovered from ${hostInfo.hostname}'s network interfaces` : 'Configured via WORKER_SCAN_SUBNETS';
+      await sweepSubnet(cidr, description, excludeIp, findGatewayForSubnet(routes, cidr));
     }
   }
 
@@ -362,8 +393,29 @@ async function runCollectionCycle(): Promise<unknown> {
     });
   }
 
+  console.log('[worker] collection phase complete');
+}
+
+/**
+ * Runs the shared evaluation pipeline (policy evaluation -> risks ->
+ * attack paths -> incidents -> auto-policy gap detection). Gated by the
+ * Redis leader lock — unlike subnet sweeping, this reads/writes global
+ * derived state (risks, attack paths) that every replica would otherwise
+ * redundantly recompute from the same underlying inventory. Exactly one
+ * replica per cycle does this; the others skip it (their collection work
+ * from this same tick already landed in the shared backend either way).
+ */
+async function runEvaluation(): Promise<unknown> {
   const summary = await backendApi.triggerEvaluation();
   console.log('[worker] evaluation complete', summary);
+  try {
+    const proposed = await backendApi.autoGeneratePolicies();
+    if (Array.isArray(proposed) && proposed.length > 0) {
+      console.log(`[worker] auto-generated ${proposed.length} draft policy proposal(s) for review`);
+    }
+  } catch (err) {
+    console.warn('[worker] auto-policy generation failed (non-fatal)', (err as Error).message);
+  }
   return summary;
 }
 
@@ -381,23 +433,32 @@ async function sendHeartbeat(isLeader: boolean, lastCycleSummary: unknown): Prom
 }
 
 async function loop(): Promise<void> {
+  let evaluationSummary: unknown = null;
+  let isLeader = false;
   try {
-    // Coordinates across horizontally-scaled worker replicas via Redis so
-    // only one replica runs a given cycle (see distributedLock.ts). The
-    // lock TTL is generously longer than the poll interval so a slow cycle
-    // never causes two replicas to run concurrently. Every replica still
-    // heartbeats every tick (leader or not) so /workers shows the full
-    // fleet, not just whichever one is currently active.
-    const result = await withCollectionCycleLock(POLL_INTERVAL_MS * 2, runCollectionCycle);
-    const isLeader = result !== 'skipped-not-leader';
-    await sendHeartbeat(isLeader, isLeader ? result : null);
+    // Every replica always runs its own collection phase (self host,
+    // its shard of the subnet sweep, its own containers/services/secrets)
+    // — that data is legitimately per-replica. Only the shared evaluation
+    // pipeline (which recomputes global derived state from the combined
+    // inventory) is gated by the Redis leader lock, so N replicas don't
+    // redundantly race to recompute the same risks/attack paths every
+    // tick. The lock TTL is generously longer than the poll interval so a
+    // slow cycle never causes two replicas to run it concurrently.
+    await runCollectionCycle();
+    const result = await withCollectionCycleLock(POLL_INTERVAL_MS * 2, runEvaluation);
+    isLeader = result !== 'skipped-not-leader';
+    evaluationSummary = isLeader ? result : null;
   } catch (err) {
     console.error('[worker] collection cycle failed', err);
-    await sendHeartbeat(false, null);
   } finally {
+    await sendHeartbeat(isLeader, evaluationSummary);
     setTimeout(loop, POLL_INTERVAL_MS);
   }
 }
 
 console.log(`[worker] starting (id=${workerId()})`);
-loop();
+// Send an initial heartbeat immediately so this replica is visible in the
+// `/workers` fleet registry before the first work-splitting decision is
+// made (shardWorkItems fails open — claims everything — for a replica not
+// yet in the fleet list, so this just avoids that fallback on cold start).
+sendHeartbeat(false, null).finally(loop);

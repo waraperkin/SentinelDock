@@ -10,6 +10,7 @@ import { dashboardRoutes } from './routes/dashboard.js';
 import { secretRoutes } from './routes/secrets.js';
 import { workerRoutes } from './routes/workers.js';
 import { auditRoutes } from './routes/audit.js';
+import { zeroTrustRoutes } from './routes/zeroTrust.js';
 import { registerAuth } from './middleware/auth.js';
 
 const app = Fastify({ logger: true });
@@ -30,6 +31,7 @@ await app.register(dashboardRoutes);
 await app.register(secretRoutes);
 await app.register(workerRoutes);
 await app.register(auditRoutes);
+await app.register(zeroTrustRoutes);
 
 const port = Number(process.env.BACKEND_PORT ?? 4000);
 

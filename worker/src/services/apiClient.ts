@@ -30,5 +30,7 @@ export const backendApi = {
   submitConfigSnapshot: (snapshot: Record<string, unknown>) => request('/configs', 'POST', snapshot),
   submitSecretFindings: (findings: Array<Record<string, unknown>>) => request('/secrets', 'POST', { findings }),
   heartbeat: (payload: Record<string, unknown>) => request('/workers/heartbeat', 'POST', payload),
+  listWorkers: () => request<Array<{ worker_id: string; online: boolean }>>('/workers', 'GET'),
   triggerEvaluation: () => request('/policies/evaluate', 'POST'),
+  autoGeneratePolicies: () => request('/policies/auto-generate', 'POST'),
 };

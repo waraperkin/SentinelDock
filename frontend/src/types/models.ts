@@ -113,7 +113,7 @@ export interface WorkerNode {
 }
 
 export interface AttackPathGraph {
-  nodes: Array<{ id: string; type: string }>;
+  nodes: Array<{ id: string; type: string; layer: string }>;
   edges: Array<{ source: string; target: string; via: string; severity: string; path_id: string }>;
 }
 
@@ -124,6 +124,17 @@ export interface IncidentScenario {
   summary: string;
   playbook: string;
   created_at: string;
+}
+
+export interface SegmentZeroTrustScore {
+  segment_id: string;
+  segment_name: string;
+  zone: string;
+  host_count: number;
+  device_classes: string[];
+  score: number;
+  critical_risk_count: number;
+  reasons: string[];
 }
 
 export interface DashboardSummary {

@@ -108,6 +108,17 @@ const NAV_ITEMS: NavItem[] = [
       </Icon>
     ),
   },
+  {
+    href: '/zero-trust',
+    label: 'Zero Trust',
+    icon: (
+      <Icon>
+        <path d="M10 2.5 16 5v5c0 4-2.7 6.6-6 7.5-3.3-.9-6-3.5-6-7.5V5l6-2.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <rect x="7.4" y="9" width="5.2" height="4" rx="0.8" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M8.4 9V7.6a1.6 1.6 0 0 1 3.2 0V9" stroke="currentColor" strokeWidth="1.3" />
+      </Icon>
+    ),
+  },
 ];
 
 export function Sidebar() {

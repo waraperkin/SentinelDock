@@ -159,6 +159,77 @@ export async function recomputeRisks(): Promise<Risk[]> {
     results.push(row);
   }
 
+  // Independent signal: IAM role naming heuristic — a role/service-account
+  // name containing "admin", "root", or "full-access" strongly suggests
+  // overprivileged access, which is a much stronger signal than "metadata
+  // was merely reachable" (the existing iam-privileged-role-exposed
+  // policy). This never inspects actual IAM policy documents (no live
+  // cloud API calls) — purely a naming-convention heuristic on the role
+  // name the worker already enumerated read-only from the metadata service.
+  const OVERPRIVILEGED_NAME_PATTERN = /admin|root|full[-_]?access|superuser|owner/i;
+  const iamSnapshots = await query<{ asset_id: string; data: { role_name?: string; provider?: string } }>(
+    "SELECT asset_id, data FROM config_snapshots WHERE kind = 'cloud-iam'",
+  );
+  for (const snapshot of iamSnapshots) {
+    const roleName = snapshot.data.role_name;
+    if (!roleName || !OVERPRIVILEGED_NAME_PATTERN.test(roleName)) continue;
+    const summary = `IAM role/service account "${roleName}" (${snapshot.data.provider ?? 'cloud'}) is named as if it holds broad/administrative privileges — reachable via the instance metadata service`;
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
+      ['host', snapshot.asset_id, 'cloud', 'critical', 85, summary],
+    );
+    results.push(row);
+  }
+
+  // Independent signal: ICS write-risk heuristics submitted by the worker
+  // (see icsScanner.ts) — a device that answered a standard read request
+  // unauthenticated on an OT protocol is scored as high risk even though
+  // no write was ever actually attempted against it.
+  const writeRiskSnapshots = await query<{ asset_id: string; data: { protocol_family?: string } }>(
+    "SELECT asset_id, data FROM config_snapshots WHERE kind = 'ics-write-risk'",
+  );
+  for (const snapshot of writeRiskSnapshots) {
+    const summary = `Service accepts unauthenticated ${snapshot.data.protocol_family ?? 'ICS'} reads and likely also accepts writes (Modbus FC5/FC6, BACnet WriteProperty) — no write was actually sent, this is a heuristic based on the absence of read-side access control`;
+    const [row] = await query<Risk>(
+      `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
+      ['service', snapshot.asset_id, 'ics', 'high', 65, summary],
+    );
+    results.push(row);
+  }
+
+  // Supply-chain risk: a host running CI/CD tooling (protocol_family
+  // 'devops', e.g. Jenkins or an exposed .git) that ALSO has a detected
+  // secret finding on the same host is a materially worse combination
+  // than either alone — an attacker with pipeline access plus a leaked
+  // credential can move straight to deploying malicious artifacts
+  // downstream, mirroring real supply-chain compromises (e.g. SolarWinds-
+  // style build-system tampering).
+  const devopsServices = await query<ServiceRecord>("SELECT * FROM services WHERE protocol_family = 'devops'");
+  const devopsHostIds = new Set(devopsServices.map((s) => s.host_id).filter((id): id is string => Boolean(id)));
+  if (devopsHostIds.size > 0) {
+    const secretsOnDevopsHosts = await query<SecretFinding>(
+      `SELECT * FROM secrets_findings WHERE asset_type = 'host' AND asset_id = ANY($1::uuid[])`,
+      [Array.from(devopsHostIds)],
+    );
+    const secretsByHost = new Map<string, SecretFinding[]>();
+    for (const finding of secretsOnDevopsHosts) {
+      secretsByHost.set(finding.asset_id, [...(secretsByHost.get(finding.asset_id) ?? []), finding]);
+    }
+    for (const [hostId, findings] of secretsByHost) {
+      const criticality = hostById.get(hostId)?.criticality ?? 'medium';
+      const score = Math.min(100, 55 + findings.length * 10 * CRITICALITY_MULTIPLIER[criticality]);
+      const summary = `Supply-chain exposure: CI/CD tooling and ${findings.length} detected secret(s) coexist on the same host — pipeline compromise could chain directly into credential theft and malicious deployment`;
+      const [row] = await query<Risk>(
+        `INSERT INTO risks (asset_type, asset_id, category, severity, score, summary, source_violation_ids)
+         VALUES ($1, $2, $3, $4, $5, $6, '{}') RETURNING *`,
+        ['host', hostId, 'devops', 'critical', score, summary],
+      );
+      results.push(row);
+    }
+  }
+
   return results;
 }
 

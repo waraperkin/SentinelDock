@@ -1,0 +1,23 @@
+key: cloud-onprem-mixed-segment
+name: Cloud instance sharing a segment with on-prem/IT hosts
+description: >
+  A cloud-classified host (device_class = cloud) shares a network segment
+  with at least one host of a different device_class (on-prem IT, or
+  ICS/OT). Mixing trust domains on the same broadcast domain violates
+  Zero Trust segmentation principles — a compromise on one side has an
+  unobstructed path to the other.
+severity: high
+recommendation: >
+  Place cloud-connected assets on a dedicated segment (or VPC/VNet with
+  explicit peering rules) separate from on-prem IT and ICS/OT segments,
+  and enforce access with identity-aware proxies rather than network
+  location alone.
+conditions:
+  target: host
+  all:
+    - field: device_class
+      operator: eq
+      value: cloud
+    - field: segment_has_mixed_device_classes
+      operator: eq
+      value: true

@@ -6,6 +6,7 @@ import { rebuildAttackPaths } from '../services/attackPathEngine.js';
 import { generateIncidentScenarios } from '../services/incidentEngine.js';
 import { scanVulnerabilities } from '../services/vulnerabilityScanner.js';
 import { recordAudit } from '../services/audit.js';
+import { autoGeneratePolicies } from '../services/autoPolicyGenerator.js';
 
 export async function policyRoutes(app: FastifyInstance) {
   app.get('/policies', async () => query('SELECT * FROM policies ORDER BY severity DESC, key'));
@@ -63,6 +64,14 @@ export async function policyRoutes(app: FastifyInstance) {
     };
     await recordAudit('policies.evaluate', req.actor ?? 'api-token', summary);
     return summary;
+  });
+
+  // Scans inventory for protocol_family/device_class combinations with no
+  // existing policy and creates disabled draft policies for human review.
+  app.post('/policies/auto-generate', async (req) => {
+    const proposed = await autoGeneratePolicies();
+    if (proposed.length > 0) await recordAudit('policies.auto-generate', req.actor ?? 'worker', { proposed: proposed.map((p) => p.key) });
+    return proposed;
   });
 
   // ---- Violations ----

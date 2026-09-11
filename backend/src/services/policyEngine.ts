@@ -54,17 +54,43 @@ async function buildEvaluationContext() {
   const hostById = new Map(hosts.map((h) => [h.id, h]));
   const containerById = new Map(containers.map((c) => [c.id, c]));
 
-  return { hosts, containers, services, hostById, containerById, segmentById };
+  // Precompute, per segment, the distinct device_class values present —
+  // this is what lets a policy detect "cloud and on-prem/IT devices share
+  // a segment" (Zero Trust segmentation concern) without the DSL needing
+  // to support cross-row aggregation itself.
+  const deviceClassesBySegment = new Map<string, Set<string>>();
+  for (const host of hosts) {
+    if (!host.network_segment_id) continue;
+    const set = deviceClassesBySegment.get(host.network_segment_id) ?? new Set<string>();
+    set.add(host.device_class);
+    deviceClassesBySegment.set(host.network_segment_id, set);
+  }
+
+  return { hosts, containers, services, hostById, containerById, segmentById, deviceClassesBySegment };
 }
 
-function enrichHost(host: Host, segmentById: Map<string, NetworkSegment>): Evaluatable {
+function enrichHost(host: Host, segmentById: Map<string, NetworkSegment>, deviceClassesBySegment?: Map<string, Set<string>>): Evaluatable {
   const segment = host.network_segment_id ? segmentById.get(host.network_segment_id) : undefined;
-  return { ...host, network_segment: segment ?? null };
+  const segmentDeviceClasses = host.network_segment_id ? deviceClassesBySegment?.get(host.network_segment_id) : undefined;
+  return {
+    ...host,
+    network_segment: segment ?? null,
+    // True when this host's segment also contains at least one host of a
+    // different device_class (e.g. a cloud instance sharing a segment with
+    // on-prem IT hosts, or IT mixed with ICS) — a genuine Zero Trust
+    // segmentation gap, not just a proxy signal.
+    segment_has_mixed_device_classes: segmentDeviceClasses ? segmentDeviceClasses.size > 1 : false,
+  };
 }
 
-function enrichContainer(container: Container, hostById: Map<string, Host>, segmentById: Map<string, NetworkSegment>): Evaluatable {
+function enrichContainer(
+  container: Container,
+  hostById: Map<string, Host>,
+  segmentById: Map<string, NetworkSegment>,
+  deviceClassesBySegment?: Map<string, Set<string>>,
+): Evaluatable {
   const host = hostById.get(container.host_id);
-  return { ...container, host: host ? enrichHost(host, segmentById) : null };
+  return { ...container, host: host ? enrichHost(host, segmentById, deviceClassesBySegment) : null };
 }
 
 function enrichService(
@@ -72,14 +98,15 @@ function enrichService(
   hostById: Map<string, Host>,
   containerById: Map<string, Container>,
   segmentById: Map<string, NetworkSegment>,
+  deviceClassesBySegment?: Map<string, Set<string>>,
 ): Evaluatable {
   const host = service.host_id ? hostById.get(service.host_id) : undefined;
   const container = service.container_id ? containerById.get(service.container_id) : undefined;
   const effectiveHost = host ?? (container ? hostById.get(container.host_id) : undefined);
   return {
     ...service,
-    host: effectiveHost ? enrichHost(effectiveHost, segmentById) : null,
-    container: container ? enrichContainer(container, hostById, segmentById) : null,
+    host: effectiveHost ? enrichHost(effectiveHost, segmentById, deviceClassesBySegment) : null,
+    container: container ? enrichContainer(container, hostById, segmentById, deviceClassesBySegment) : null,
   };
 }
 
@@ -90,7 +117,7 @@ function enrichService(
  */
 export async function evaluatePolicies(): Promise<PolicyViolation[]> {
   const policies = await query<Policy>('SELECT * FROM policies WHERE enabled = true');
-  const { hosts, containers, services, hostById, containerById, segmentById } = await buildEvaluationContext();
+  const { hosts, containers, services, hostById, containerById, segmentById, deviceClassesBySegment } = await buildEvaluationContext();
 
   const freshDetections: Array<{ policy: Policy; assetType: string; assetId: string; details: Record<string, unknown> }> = [];
 
@@ -98,21 +125,21 @@ export async function evaluatePolicies(): Promise<PolicyViolation[]> {
     const { target } = policy.conditions;
     if (target === 'host') {
       for (const host of hosts) {
-        const enriched = enrichHost(host, segmentById);
+        const enriched = enrichHost(host, segmentById, deviceClassesBySegment);
         if (matchesPolicy(enriched, policy)) {
           freshDetections.push({ policy, assetType: 'host', assetId: host.id, details: { hostname: host.hostname } });
         }
       }
     } else if (target === 'container') {
       for (const container of containers) {
-        const enriched = enrichContainer(container, hostById, segmentById);
+        const enriched = enrichContainer(container, hostById, segmentById, deviceClassesBySegment);
         if (matchesPolicy(enriched, policy)) {
           freshDetections.push({ policy, assetType: 'container', assetId: container.id, details: { name: container.name, image: container.image } });
         }
       }
     } else if (target === 'service') {
       for (const service of services) {
-        const enriched = enrichService(service, hostById, containerById, segmentById);
+        const enriched = enrichService(service, hostById, containerById, segmentById, deviceClassesBySegment);
         if (matchesPolicy(enriched, policy)) {
           freshDetections.push({
             policy,

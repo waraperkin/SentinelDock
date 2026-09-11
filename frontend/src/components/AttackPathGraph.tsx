@@ -10,18 +10,27 @@ const SEVERITY_COLOR: Record<string, string> = {
   critical: '#ef4a5f',
 };
 
-const NODE_COLOR: Record<string, string> = {
-  service: '#22d3c8',
-  host: '#a78bfa',
-  container: '#34d399',
+// Colored by *layer* (network/container/service/ics/cloud/devops/it), not
+// raw asset type — this is what makes the graph read as multi-domain
+// rather than just "here are some dots".
+const LAYER_COLOR: Record<string, string> = {
   network: '#5b6b85',
+  container: '#34d399',
+  service: '#22d3c8',
+  it: '#a78bfa',
+  ics: '#ef4a5f',
+  cloud: '#5eead4',
+  devops: '#d9a441',
 };
 
-const NODE_LABEL: Record<string, string> = {
-  service: 'Service',
-  host: 'Host',
-  container: 'Container',
+const LAYER_LABEL: Record<string, string> = {
   network: 'Network',
+  container: 'Container',
+  service: 'Service',
+  it: 'Host (IT)',
+  ics: 'ICS/OT',
+  cloud: 'Cloud',
+  devops: 'DevOps',
 };
 
 /** Simple circular layout SVG graph — no external charting dependency. */
@@ -39,7 +48,7 @@ export function AttackPathGraphView({ graph }: { graph: AttackPathGraph }) {
     positions.set(node.id, { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
   });
 
-  const usedTypes = Array.from(new Set(graph.nodes.map((n) => n.type)));
+  const usedLayers = Array.from(new Set(graph.nodes.map((n) => n.layer)));
 
   return (
     <div className="sd-panel p-4">
@@ -70,7 +79,7 @@ export function AttackPathGraphView({ graph }: { graph: AttackPathGraph }) {
             {graph.nodes.map((node) => {
               const pos = positions.get(node.id);
               if (!pos) return null;
-              const color = NODE_COLOR[node.type] ?? '#64748b';
+              const color = LAYER_COLOR[node.layer] ?? '#64748b';
               return (
                 <g key={node.id} onMouseEnter={() => setHovered(node.id)} onMouseLeave={() => setHovered(null)} className="cursor-pointer">
                   <circle cx={pos.x} cy={pos.y} r={12} fill={color} opacity={0.18} />
@@ -82,11 +91,11 @@ export function AttackPathGraphView({ graph }: { graph: AttackPathGraph }) {
               );
             })}
           </svg>
-          <div className="flex items-center gap-5 px-2 pt-2 border-t border-[var(--sd-border)] mt-1">
-            {usedTypes.map((type) => (
-              <div key={type} className="flex items-center gap-1.5 text-xs text-[var(--sd-text-muted)]">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: NODE_COLOR[type] ?? '#64748b' }} />
-                {NODE_LABEL[type] ?? type}
+          <div className="flex flex-wrap items-center gap-5 px-2 pt-2 border-t border-[var(--sd-border)] mt-1">
+            {usedLayers.map((layer) => (
+              <div key={layer} className="flex items-center gap-1.5 text-xs text-[var(--sd-text-muted)]">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: LAYER_COLOR[layer] ?? '#64748b' }} />
+                {LAYER_LABEL[layer] ?? layer}
               </div>
             ))}
           </div>

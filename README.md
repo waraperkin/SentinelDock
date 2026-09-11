@@ -405,6 +405,94 @@ not a hand-rolled parser). NVD live CVE lookups and real cloud IAM API
 calls (beyond read-only role-name enumeration) remain out of scope for
 the reasons described above — see "Known limitations" below.
 
+## Roadmap-cycle additions (distributed work-splitting, multi-layer graph, and beyond)
+
+**Real distributed work-splitting** (`worker/src/services/distributedLock.ts`,
+`worker/src/index.ts`) — the Ultra-tier note above said replica coordination
+prevented duplicate scans but did not split work. It now does: every
+replica always runs its own per-host collection (self host, containers,
+services, secrets), and subnet sweeping is sharded across the live
+`/workers` fleet with a deterministic hash (`shardWorkItems()`, djb2 hash
+mod fleet size) — each replica independently computes the same partition
+with no extra coordination round-trip. Only the Redis-lock leader still
+runs the shared evaluation pipeline (policy eval, risks, attack paths,
+incidents), since that reads/writes global derived state every replica
+would otherwise redundantly recompute. A cold-started replica sends an
+initial heartbeat before its first work-splitting decision so it is
+visible in its own shard computation; a replica not yet visible to itself
+fails open (claims everything) rather than sweeping nothing.
+
+**Multi-layer attack graph** (`backend/src/routes/attackPaths.ts`
+`GET /attack-paths/graph`, `frontend/src/components/AttackPathGraph.tsx`) —
+graph nodes are now tagged with a derived `layer` (network / container /
+service / host IT / ICS-OT / cloud / DevOps) instead of raw asset type,
+reusing the existing `device_class` (hosts) and `protocol_family`
+(services) columns rather than new schema. The frontend colors and
+legends by layer, so a single graph reads as genuinely multi-domain.
+
+**Advanced vulnerability engine** (`backend/src/services/vulnerabilityScanner.ts`) —
+`VulnMatch` now carries a distinct `cwe` field (previously CWE identifiers
+like `CWE-319` were incorrectly stored inside the `cve_ids` array for
+telnet/FTP; `cve_ids` keeps that value for backward compatibility with
+stored rows, but `cwe` is now the correct place to read it from) plus a
+0-10 `exploitability` heuristic sub-score independent of CVSS impact. The
+rule set grew from 6 to 11 curated entries (added MySQL, MongoDB,
+Elasticsearch, SMB/EternalBlue-class, RDP/BlueKeep-class). Still a
+curated static rule set illustrating the shape a live NVD feed would
+populate, not a live CVE lookup.
+
+**ICS/OT advanced identity + write-risk heuristic** (`worker/src/collectors/icsScanner.ts`) —
+S7comm now follows a successful Setup Communication with a real SZL
+("System Zustandsliste") read (function 0x04, SZL ID 0x001C) to recover
+the PLC's order-number/version string as device identity; BACnet follows
+a successful Who-Is/I-Am with a real ReadProperty request for the device
+object's Object-Name. Both remain strictly read-only. Separately, Modbus
+and BACnet probes now record a `likelyAcceptsWrites` heuristic flag when
+the device answered a standard read request with no authentication or
+restriction — **this is a naming/inference heuristic only; SentinelDock
+never sends a real Modbus FC5/FC6 write or BACnet WriteProperty to any
+device**, since actually writing to an unauthorized OT device is a
+destructive, potentially unsafe action outside this platform's scope as
+a defensive scanner. The heuristic feeds a new "ics" category risk via a
+`ics-write-risk` config snapshot.
+
+**Cloud advanced: IAM naming heuristic + mixed-segment detection** —
+`backend/src/services/riskEngine.ts` now flags IAM roles/service accounts
+enumerated by the existing read-only metadata scan whose name contains
+"admin", "root", "full-access", "superuser", or "owner" as a likely
+overprivileged role (critical risk) — still a naming-convention heuristic,
+never a live IAM policy-document inspection. Separately,
+`backend/src/services/policyEngine.ts` now precomputes, per network
+segment, the distinct `device_class` values present, powering a new
+`cloud-onprem-mixed-segment` policy that flags a cloud host sharing a
+segment with any other device class.
+
+**DevOps/CI-CD supply-chain risk scoring** — a host running CI/CD tooling
+(`protocol_family = 'devops'`, e.g. Jenkins or an exposed `.git`) that
+also has a detected secret finding on the same host now gets a dedicated
+critical "supply-chain exposure" risk, since that combination is a
+materially worse real-world path (pipeline access + leaked credential ->
+malicious deployment) than either signal alone.
+
+**Zero Trust Engine** (`backend/src/services/zeroTrustEngine.ts`,
+`GET /zero-trust/segments`, `frontend/src/app/zero-trust/page.tsx`) — a
+0-100 segmentation-maturity heuristic per network segment, combining zone
+exposure (management < internal < dmz < public), device-class mixing,
+ICS/OT placement outside a management zone, and attached critical risks.
+Explicitly a heuristic maturity indicator built from data this platform
+already collects, not a certification against a formal framework like
+NIST SP 800-207.
+
+**Auto-policy generation** (`backend/src/services/autoPolicyGenerator.ts`,
+`POST /policies/auto-generate`) — scans current inventory for
+`protocol_family` (services) and `device_class` (hosts) values with no
+existing policy and creates **disabled draft policies** (`enabled: false`)
+proposing a starting condition set for human review. It never enables a
+policy itself and is idempotent (re-running does not duplicate proposals
+for combinations already proposed or already covered by a real policy).
+The worker calls this once per leader evaluation cycle, non-fatally on
+failure.
+
 ## Known limitations
 
 - The attack-path builder is a simple BFS heuristic over the `dependencies`
