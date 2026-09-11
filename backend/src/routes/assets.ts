@@ -97,7 +97,21 @@ export async function assetRoutes(app: FastifyInstance) {
   });
 
   // ---- Containers ----
-  app.get('/assets/containers', async () => query('SELECT * FROM containers ORDER BY name'));
+  // Tenant scoping here is derived via a join to hosts.tenant_id rather
+  // than a duplicated tenant_id column on containers — a container's
+  // tenant is always its host's tenant, so storing it twice would just be
+  // a second copy of the same fact to keep in sync.
+  app.get('/assets/containers', async (req) => {
+    const { tenant_id } = req.query as Record<string, string | undefined>;
+    const scope = tenant_id ?? req.tenantId;
+    if (scope) {
+      return query(
+        'SELECT c.* FROM containers c JOIN hosts h ON h.id = c.host_id WHERE h.tenant_id = $1 ORDER BY c.name',
+        [scope],
+      );
+    }
+    return query('SELECT * FROM containers ORDER BY name');
+  });
 
   app.get('/assets/containers/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -130,7 +144,25 @@ export async function assetRoutes(app: FastifyInstance) {
   });
 
   // ---- Services ----
-  app.get('/assets/services', async () => query('SELECT * FROM services ORDER BY port'));
+  // Same derived-scoping approach as containers above: a service's tenant
+  // is its own host's tenant, or (when it runs in a container instead)
+  // that container's host's tenant — never stored redundantly on services.
+  app.get('/assets/services', async (req) => {
+    const { tenant_id } = req.query as Record<string, string | undefined>;
+    const scope = tenant_id ?? req.tenantId;
+    if (scope) {
+      return query(
+        `SELECT s.* FROM services s
+         LEFT JOIN hosts h ON h.id = s.host_id
+         LEFT JOIN containers c ON c.id = s.container_id
+         LEFT JOIN hosts ch ON ch.id = c.host_id
+         WHERE COALESCE(h.tenant_id, ch.tenant_id) = $1
+         ORDER BY s.port`,
+        [scope],
+      );
+    }
+    return query('SELECT * FROM services ORDER BY port');
+  });
 
   app.get('/assets/services/:id', async (req, reply) => {
     const { id } = req.params as { id: string };

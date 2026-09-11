@@ -674,12 +674,20 @@ top of the existing opt-in `API_TOKENS` env-var mechanism
 (`backend/src/middleware/auth.ts`), which is completely unchanged and
 still works standalone. A token is never stored raw — only its sha256
 hash — and is returned in full exactly once, at creation. Tenant scoping
-is applied to the core asset tables (`hosts`, `network_segments`: a
-nullable `tenant_id` column, additive migration, `NULL` = default/global
-tenant so no existing deployment needs any migration action) and their
-`GET`/`POST` routes in `assets.ts` — not yet threaded through every other
-subsystem (risks, secrets, etc.), which is an honest scope limit for this
-iteration, not a claim of full multi-tenant isolation everywhere.
+is applied to the tables that actually own a tenant relationship —
+`hosts` and `network_segments` get a nullable `tenant_id` column
+(additive migration, `NULL` = default/global tenant so no existing
+deployment needs any migration action), while `containers` and
+`services` derive their scope by joining to their owning host's
+`tenant_id` rather than duplicating the column onto them (a container's
+tenant is always its host's tenant, so storing it twice would just be a
+second copy of the same fact to drift out of sync). All four asset
+listing routes in `assets.ts` (`GET /assets/hosts`, `/network`,
+`/containers`, `/services`) honor an explicit `?tenant_id=` filter or an
+authenticated SOVEREIGN token's own tenant scope. This is not yet
+threaded through every other subsystem (risks, secrets, attack paths,
+etc.), which is an honest scope limit for this iteration, not a claim of
+full multi-tenant isolation everywhere.
 Unlike the rest of this platform's "opt-in, never rejects by default"
 auth philosophy, the new `/sovereign/*` management routes are STRICTLY
 gated by `requireRole('admin')` (401 with no token, 403 with an
