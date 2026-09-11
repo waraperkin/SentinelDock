@@ -1,0 +1,18 @@
+key: ssh-exposed-public
+name: SSH exposed to the public internet
+description: >
+  Detects any service on port 22 bound to a wildcard address and marked as
+  publicly exposed. SSH should only be reachable through a bastion or VPN.
+severity: critical
+recommendation: >
+  Bind SSH to an internal-only interface or restrict access through a bastion
+  host / VPN. Remove the public exposure flag once fixed.
+conditions:
+  target: service
+  all:
+    - field: port
+      operator: eq
+      value: 22
+    - field: exposed_publicly
+      operator: eq
+      value: true

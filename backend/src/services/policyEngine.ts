@@ -1,0 +1,152 @@
+import { query } from '../db/pool.js';
+import type { Host, Container, ServiceRecord, Policy, PolicyCondition, PolicyViolation, NetworkSegment } from '../types/models.js';
+
+type Evaluatable = Record<string, unknown>;
+
+function getField(obj: Evaluatable, path: string): unknown {
+  return path.split('.').reduce<unknown>((acc, key) => {
+    if (acc === null || acc === undefined) return undefined;
+    return (acc as Record<string, unknown>)[key];
+  }, obj);
+}
+
+function evalCondition(target: Evaluatable, cond: PolicyCondition): boolean {
+  const actual = getField(target, cond.field);
+  switch (cond.operator) {
+    case 'eq':
+      return actual === cond.value;
+    case 'neq':
+      return actual !== cond.value;
+    case 'in':
+      return Array.isArray(cond.value) && cond.value.includes(actual);
+    case 'not_in':
+      return Array.isArray(cond.value) && !cond.value.includes(actual);
+    case 'lt':
+      return typeof actual === 'number' && actual < (cond.value as number);
+    case 'lte':
+      return typeof actual === 'number' && actual <= (cond.value as number);
+    case 'gt':
+      return typeof actual === 'number' && actual > (cond.value as number);
+    case 'gte':
+      return typeof actual === 'number' && actual >= (cond.value as number);
+    case 'contains':
+      return typeof actual === 'string' && actual.includes(String(cond.value));
+    default:
+      return false;
+  }
+}
+
+function matchesPolicy(target: Evaluatable, policy: Policy): boolean {
+  const { all, any } = policy.conditions;
+  const allOk = !all || all.every((c) => evalCondition(target, c));
+  const anyOk = !any || any.length === 0 || any.some((c) => evalCondition(target, c));
+  return allOk && anyOk;
+}
+
+async function buildEvaluationContext() {
+  const segments = await query<NetworkSegment>('SELECT * FROM network_segments');
+  const segmentById = new Map(segments.map((s) => [s.id, s]));
+
+  const hosts = await query<Host>('SELECT * FROM hosts');
+  const containers = await query<Container>('SELECT * FROM containers');
+  const services = await query<ServiceRecord>('SELECT * FROM services');
+
+  const hostById = new Map(hosts.map((h) => [h.id, h]));
+  const containerById = new Map(containers.map((c) => [c.id, c]));
+
+  return { hosts, containers, services, hostById, containerById, segmentById };
+}
+
+function enrichHost(host: Host, segmentById: Map<string, NetworkSegment>): Evaluatable {
+  const segment = host.network_segment_id ? segmentById.get(host.network_segment_id) : undefined;
+  return { ...host, network_segment: segment ?? null };
+}
+
+function enrichContainer(container: Container, hostById: Map<string, Host>, segmentById: Map<string, NetworkSegment>): Evaluatable {
+  const host = hostById.get(container.host_id);
+  return { ...container, host: host ? enrichHost(host, segmentById) : null };
+}
+
+function enrichService(
+  service: ServiceRecord,
+  hostById: Map<string, Host>,
+  containerById: Map<string, Container>,
+  segmentById: Map<string, NetworkSegment>,
+): Evaluatable {
+  const host = service.host_id ? hostById.get(service.host_id) : undefined;
+  const container = service.container_id ? containerById.get(service.container_id) : undefined;
+  const effectiveHost = host ?? (container ? hostById.get(container.host_id) : undefined);
+  return {
+    ...service,
+    host: effectiveHost ? enrichHost(effectiveHost, segmentById) : null,
+    container: container ? enrichContainer(container, hostById, segmentById) : null,
+  };
+}
+
+/**
+ * Evaluates all enabled policies against current inventory + configs and
+ * persists PolicyViolation rows. Existing open violations for assets that no
+ * longer match are marked resolved (idempotent re-evaluation).
+ */
+export async function evaluatePolicies(): Promise<PolicyViolation[]> {
+  const policies = await query<Policy>('SELECT * FROM policies WHERE enabled = true');
+  const { hosts, containers, services, hostById, containerById, segmentById } = await buildEvaluationContext();
+
+  const freshDetections: Array<{ policy: Policy; assetType: string; assetId: string; details: Record<string, unknown> }> = [];
+
+  for (const policy of policies) {
+    const { target } = policy.conditions;
+    if (target === 'host') {
+      for (const host of hosts) {
+        const enriched = enrichHost(host, segmentById);
+        if (matchesPolicy(enriched, policy)) {
+          freshDetections.push({ policy, assetType: 'host', assetId: host.id, details: { hostname: host.hostname } });
+        }
+      }
+    } else if (target === 'container') {
+      for (const container of containers) {
+        const enriched = enrichContainer(container, hostById, segmentById);
+        if (matchesPolicy(enriched, policy)) {
+          freshDetections.push({ policy, assetType: 'container', assetId: container.id, details: { name: container.name, image: container.image } });
+        }
+      }
+    } else if (target === 'service') {
+      for (const service of services) {
+        const enriched = enrichService(service, hostById, containerById, segmentById);
+        if (matchesPolicy(enriched, policy)) {
+          freshDetections.push({
+            policy,
+            assetType: 'service',
+            assetId: service.id,
+            details: { name: service.name, port: service.port, bind_address: service.bind_address },
+          });
+        }
+      }
+    }
+  }
+
+  // Resolve violations whose (policy, asset) pair is no longer detected.
+  const openViolations = await query<PolicyViolation>("SELECT * FROM policy_violations WHERE status = 'open'");
+  const freshKeys = new Set(freshDetections.map((d) => `${d.policy.id}:${d.assetType}:${d.assetId}`));
+  for (const violation of openViolations) {
+    const key = `${violation.policy_id}:${violation.asset_type}:${violation.asset_id}`;
+    if (!freshKeys.has(key)) {
+      await query('UPDATE policy_violations SET status = $1, resolved_at = now() WHERE id = $2', ['resolved', violation.id]);
+    }
+  }
+
+  const existingOpenKeys = new Set(openViolations.map((v) => `${v.policy_id}:${v.asset_type}:${v.asset_id}`));
+  const results: PolicyViolation[] = [];
+  for (const detection of freshDetections) {
+    const key = `${detection.policy.id}:${detection.assetType}:${detection.assetId}`;
+    if (existingOpenKeys.has(key)) continue; // already recorded and open
+    const [row] = await query<PolicyViolation>(
+      `INSERT INTO policy_violations (policy_id, asset_type, asset_id, severity, details)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [detection.policy.id, detection.assetType, detection.assetId, detection.policy.severity, JSON.stringify(detection.details)],
+    );
+    results.push(row);
+  }
+
+  return query<PolicyViolation>("SELECT * FROM policy_violations WHERE status = 'open' ORDER BY detected_at DESC");
+}

@@ -1,0 +1,18 @@
+key: privileged-container
+name: Privileged container running
+description: >
+  Privileged containers can access host devices and break out of container
+  isolation. Flags any container running with the privileged flag set.
+severity: high
+recommendation: >
+  Remove the --privileged flag; grant only the specific capabilities the
+  workload actually needs (--cap-add).
+conditions:
+  target: container
+  all:
+    - field: privileged
+      operator: eq
+      value: true
+    - field: status
+      operator: eq
+      value: running

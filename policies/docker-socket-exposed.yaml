@@ -1,0 +1,18 @@
+key: docker-socket-exposed
+name: Docker socket exposed via a service
+description: >
+  Flags any service named after the Docker daemon socket/API (typically port
+  2375/2376) that is reachable, which can grant full host takeover.
+severity: critical
+recommendation: >
+  Never expose the Docker socket over the network. Remove the port mapping or
+  proxy it behind an authenticated, TLS-secured socket proxy.
+conditions:
+  target: service
+  any:
+    - field: port
+      operator: eq
+      value: 2375
+    - field: port
+      operator: eq
+      value: 2376

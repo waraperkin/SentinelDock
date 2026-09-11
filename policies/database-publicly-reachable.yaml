@@ -1,0 +1,28 @@
+key: database-publicly-reachable
+name: Database port reachable from a public network segment
+description: >
+  Databases (Postgres/MySQL/Redis/Mongo default ports) should never be
+  publicly exposed or attached to a host on a public network segment.
+severity: high
+recommendation: >
+  Move the database host to an internal or management segment and disable
+  public exposure on the service.
+conditions:
+  target: service
+  all:
+    - field: exposed_publicly
+      operator: eq
+      value: true
+  any:
+    - field: port
+      operator: eq
+      value: 5432
+    - field: port
+      operator: eq
+      value: 3306
+    - field: port
+      operator: eq
+      value: 6379
+    - field: port
+      operator: eq
+      value: 27017

@@ -1,0 +1,15 @@
+{
+  "name": "sentineldock",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "backend",
+    "worker",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev -w backend",
+    "dev:worker": "npm run dev -w worker",
+    "dev:frontend": "npm run dev -w frontend"
+  }
+}

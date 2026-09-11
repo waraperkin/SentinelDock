@@ -1,0 +1,18 @@
+key: outdated-os-critical-host
+name: Unpatched OS on a critical host
+description: >
+  Hosts marked critical must run a currently supported OS release. This
+  example targets hosts still reporting the legacy 'linux-4.x' kernel line.
+severity: high
+recommendation: >
+  Patch the host to a supported kernel/OS release and re-run collection to
+  confirm remediation.
+conditions:
+  target: host
+  all:
+    - field: criticality
+      operator: in
+      value: [high, critical]
+    - field: os_version
+      operator: contains
+      value: "4."
