@@ -30,7 +30,11 @@ export interface ServiceRecord {
   port: number;
   protocol: string;
   bind_address: string;
+  banner?: string | null;
+  version?: string | null;
   exposed_publicly: boolean;
+  cve_ids: string[];
+  cvss_score?: number | null;
 }
 
 export interface NetworkSegment {

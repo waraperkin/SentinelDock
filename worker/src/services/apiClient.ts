@@ -18,6 +18,7 @@ export const backendApi = {
   upsertHost: (host: Record<string, unknown>) => request('/assets/hosts', 'POST', host),
   upsertContainer: (container: Record<string, unknown>) => request('/assets/containers', 'POST', container),
   upsertService: (service: Record<string, unknown>) => request('/assets/services', 'POST', service),
+  upsertNetworkSegment: (segment: Record<string, unknown>) => request('/assets/network', 'POST', segment),
   submitConfigSnapshot: (snapshot: Record<string, unknown>) => request('/configs', 'POST', snapshot),
   triggerEvaluation: () => request('/policies/evaluate', 'POST'),
 };

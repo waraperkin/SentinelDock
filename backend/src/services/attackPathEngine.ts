@@ -22,12 +22,20 @@ export async function rebuildAttackPaths(): Promise<AttackPath[]> {
   const hostById = new Map(hosts.map((h) => [h.id, h]));
   const riskByAsset = new Map(risks.map((r) => [`${r.asset_type}:${r.asset_id}`, r]));
 
+  // Bidirectional adjacency: an attacker who lands on a host can pivot to
+  // any other service/container that "runs_on" that same host, not just
+  // follow containment edges downward — this is what makes a realistic
+  // chain like SSH -> host -> Docker API -> container -> database possible.
   const adjacency = new Map<string, Array<{ type: string; id: string; relation: string }>>();
-  for (const dep of dependencies) {
-    const key = `${dep.source_asset_type}:${dep.source_asset_id}`;
+  function addEdge(sourceType: string, sourceId: string, targetType: string, targetId: string, relation: string): void {
+    const key = `${sourceType}:${sourceId}`;
     const list = adjacency.get(key) ?? [];
-    list.push({ type: dep.target_asset_type, id: dep.target_asset_id, relation: dep.relation });
+    list.push({ type: targetType, id: targetId, relation });
     adjacency.set(key, list);
+  }
+  for (const dep of dependencies) {
+    addEdge(dep.source_asset_type, dep.source_asset_id, dep.target_asset_type, dep.target_asset_id, dep.relation);
+    addEdge(dep.target_asset_type, dep.target_asset_id, dep.source_asset_type, dep.source_asset_id, `${dep.relation} (reverse)`);
   }
 
   await query('DELETE FROM attack_paths');

@@ -1,0 +1,22 @@
+key: sensitive-ports-exposed-wan
+name: Sensitive administrative port exposed to the WAN
+description: >
+  Telnet and RDP are inherently insecure or high-value administrative
+  protocols that should never be reachable from outside the network.
+severity: critical
+recommendation: >
+  Remove any public/WAN exposure for these ports. Use a VPN or bastion for
+  remote administration instead.
+conditions:
+  target: service
+  all:
+    - field: exposed_publicly
+      operator: eq
+      value: true
+  any:
+    - field: port
+      operator: eq
+      value: 23
+    - field: port
+      operator: eq
+      value: 3389

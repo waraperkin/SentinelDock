@@ -173,9 +173,46 @@ directly via the REST API for scripted or declarative ingestion.
 
 - The attack-path builder is a simple BFS heuristic over the `dependencies`
   graph seeded from exposed services with an existing risk — it is not a
-  full graph-theoretic attack-path/MITRE ATT&CK model.
-- The worker's service discovery is a TCP probe of a small fixed port list
-  on localhost, not a full port scanner.
+  full graph-theoretic attack-path/MITRE ATT&CK model. It does traverse
+  `dependencies` edges bidirectionally, so lateral pivoting between
+  services/containers that share a host is modeled (e.g. SSH -> host ->
+  Docker API -> container -> database), not just downward containment.
+- The worker's service discovery is a real TCP probe + banner grab against
+  a curated port list on localhost (not a full port scanner), and extracts
+  a version string from the banner where the protocol exposes one (SSH,
+  Redis, FTP, PostgreSQL).
+- Vulnerability matching (`backend/src/services/vulnerabilityScanner.ts`) is
+  a small curated static rule set illustrating the same evaluation shape a
+  live NVD/CVE feed would populate — it is intentionally not a live network
+  call to an external CVE database, since that is unreliable to depend on
+  from this environment.
 - Docker collection requires the container to have access to
   `/var/run/docker.sock`; if unavailable, the worker degrades gracefully to
   an empty container list rather than failing.
+- Route discovery (`ip route`) requires `iproute2` in the worker image
+  (added to `worker/Dockerfile`); if unavailable it degrades to an empty
+  route list rather than failing the collection cycle.
+
+## Advanced policies
+
+Beyond the five baseline examples, `policies/` also includes:
+
+6. `sensitive-ports-exposed-wan.yaml` — Telnet/RDP reachable publicly
+7. `ot-it-segmentation.yaml` — an OT/ICS-role host sharing a segment with general IT traffic
+
+## Risk categories
+
+Risks are computed from two independent signals — open policy violations
+(classified into `exposure` / `network` / `container` / `host` /
+`misconfiguration` by the triggering policy) and known-vulnerable service
+versions (`vulnerability`, scored from CVSS). An asset can carry risks in
+more than one category simultaneously.
+
+## Incident playbooks
+
+Each generated `incident_scenarios` row picks a category-specific playbook
+(SSH compromise, Docker API compromise, database compromise, privileged
+container compromise, or known-vulnerability response) from
+`backend/src/services/incidentEngine.ts`, each with the five standard
+sections: **Immediate Actions**, **Containment**, **Eradication**,
+**Recovery**, **Lessons Learned**.

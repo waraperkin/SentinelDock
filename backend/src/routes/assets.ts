@@ -2,6 +2,23 @@ import type { FastifyInstance } from 'fastify';
 import { query, queryOne } from '../db/pool.js';
 import os from 'node:os';
 
+async function ensureDependency(sourceType: string, sourceId: string, targetType: string, targetId: string, relation: string): Promise<void> {
+  const existing = await queryOne(
+    'SELECT id FROM dependencies WHERE source_asset_type = $1 AND source_asset_id = $2 AND target_asset_type = $3 AND target_asset_id = $4 AND relation = $5',
+    [sourceType, sourceId, targetType, targetId, relation],
+  );
+  if (existing) return;
+  await query(
+    'INSERT INTO dependencies (source_asset_type, source_asset_id, target_asset_type, target_asset_id, relation) VALUES ($1,$2,$3,$4,$5)',
+    [sourceType, sourceId, targetType, targetId, relation],
+  );
+}
+
+async function linkServiceDependencies(service: { id: string; host_id?: string | null; container_id?: string | null }): Promise<void> {
+  if (service.container_id) await ensureDependency('service', service.id, 'container', service.container_id, 'runs_on');
+  else if (service.host_id) await ensureDependency('service', service.id, 'host', service.host_id, 'runs_on');
+}
+
 export async function assetRoutes(app: FastifyInstance) {
   // ---- Hosts ----
   app.get('/assets/hosts', async () => query('SELECT * FROM hosts ORDER BY hostname'));
@@ -21,10 +38,12 @@ export async function assetRoutes(app: FastifyInstance) {
     if (existing) {
       const row = await queryOne(
         `UPDATE hosts SET os = COALESCE($1, os), os_version = COALESCE($2, os_version), ip_address = COALESCE($3, ip_address),
-          role = COALESCE($4, role), criticality = COALESCE($5, criticality), last_seen = now(), updated_at = now()
-         WHERE id = $6 RETURNING *`,
-        [b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? null, b.criticality ?? null, existing.id],
+          role = COALESCE($4, role), criticality = COALESCE($5, criticality), network_segment_id = COALESCE($6, network_segment_id),
+          last_seen = now(), updated_at = now()
+         WHERE id = $7 RETURNING *`,
+        [b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? null, b.criticality ?? null, b.network_segment_id ?? null, existing.id],
       );
+      if (row?.network_segment_id) await ensureDependency('host', row.id, 'network', row.network_segment_id, 'member_of');
       return reply.code(200).send(row);
     }
     const row = await queryOne(
@@ -32,6 +51,7 @@ export async function assetRoutes(app: FastifyInstance) {
        VALUES ($1,$2,$3,$4,$5,$6,$7, now()) RETURNING *`,
       [b.hostname, b.os ?? null, b.os_version ?? null, b.ip_address ?? null, b.role ?? 'generic', b.network_segment_id ?? null, b.criticality ?? 'medium'],
     );
+    if (row?.network_segment_id) await ensureDependency('host', row.id, 'network', row.network_segment_id, 'member_of');
     return reply.code(201).send(row);
   });
 
@@ -69,6 +89,7 @@ export async function assetRoutes(app: FastifyInstance) {
          WHERE id = $6 RETURNING *`,
         [b.image, b.image_tag ?? null, b.status ?? 'running', JSON.stringify(b.ports ?? []), b.privileged ?? false, existing.id],
       );
+      if (row?.host_id) await ensureDependency('container', row.id, 'host', row.host_id, 'runs_on');
       return reply.code(200).send(row);
     }
     const row = await queryOne(
@@ -76,6 +97,7 @@ export async function assetRoutes(app: FastifyInstance) {
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [b.host_id, b.name, b.image, b.image_tag ?? null, b.status ?? 'running', JSON.stringify(b.ports ?? []), b.privileged ?? false],
     );
+    if (row?.host_id) await ensureDependency('container', row.id, 'host', row.host_id, 'runs_on');
     return reply.code(201).send(row);
   });
 
@@ -103,6 +125,7 @@ export async function assetRoutes(app: FastifyInstance) {
          WHERE id = $7 RETURNING *`,
         [b.name, b.protocol ?? 'tcp', b.bind_address ?? '0.0.0.0', b.banner ?? null, b.version ?? null, b.exposed_publicly ?? false, existing.id],
       );
+      await linkServiceDependencies(row);
       return reply.code(200).send(row);
     }
     const row = await queryOne(
@@ -120,6 +143,7 @@ export async function assetRoutes(app: FastifyInstance) {
         b.exposed_publicly ?? false,
       ],
     );
+    await linkServiceDependencies(row);
     return reply.code(201).send(row);
   });
 
@@ -133,8 +157,19 @@ export async function assetRoutes(app: FastifyInstance) {
     return row;
   });
 
+  // Upserts by name so repeated worker collection cycles update the same
+  // segment row instead of hitting the unique-name constraint.
   app.post('/assets/network', async (req, reply) => {
     const b = req.body as Record<string, unknown>;
+    const existing = await queryOne<{ id: string }>('SELECT id FROM network_segments WHERE name = $1', [b.name]);
+    if (existing) {
+      const row = await queryOne(
+        `UPDATE network_segments SET cidr = COALESCE($1, cidr), zone = COALESCE($2, zone), description = COALESCE($3, description)
+         WHERE id = $4 RETURNING *`,
+        [b.cidr ?? null, b.zone ?? null, b.description ?? null, existing.id],
+      );
+      return reply.code(200).send(row);
+    }
     const row = await queryOne(
       `INSERT INTO network_segments (name, cidr, zone, description) VALUES ($1,$2,$3,$4) RETURNING *`,
       [b.name, b.cidr, b.zone ?? 'internal', b.description ?? null],

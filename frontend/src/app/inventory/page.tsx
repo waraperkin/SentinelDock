@@ -63,8 +63,15 @@ export default async function InventoryPage() {
       />
       <Table
         title={`Services (${services.length})`}
-        headers={['Name', 'Port', 'Bind Address', 'Exposed Publicly']}
-        rows={services.map((s) => [s.name, s.port, s.bind_address, s.exposed_publicly ? 'yes' : 'no'])}
+        headers={['Name', 'Port', 'Version', 'Bind Address', 'Exposed Publicly', 'Known CVEs']}
+        rows={services.map((s) => [
+          s.name,
+          s.port,
+          s.version ?? '-',
+          s.bind_address,
+          s.exposed_publicly ? 'yes' : 'no',
+          s.cve_ids.length > 0 ? s.cve_ids.join(', ') : '-',
+        ])}
       />
       <Table
         title={`Network Segments (${segments.length})`}

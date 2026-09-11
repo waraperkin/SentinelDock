@@ -55,6 +55,8 @@ export interface ServiceRecord {
   banner?: string | null;
   version?: string | null;
   exposed_publicly: boolean;
+  cve_ids: string[];
+  cvss_score?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -120,7 +122,7 @@ export interface Risk {
   id: string;
   asset_type: AssetType;
   asset_id: string;
-  category: 'exposure' | 'misconfiguration' | 'segmentation' | 'patching';
+  category: 'exposure' | 'misconfiguration' | 'segmentation' | 'patching' | 'vulnerability' | 'network' | 'container' | 'host';
   severity: Severity;
   score: number;
   summary: string;

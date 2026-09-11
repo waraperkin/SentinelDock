@@ -9,6 +9,7 @@ RUN npm run build -w worker
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache iproute2
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/worker/dist ./worker/dist
 COPY --from=build /app/worker/package.json ./worker/package.json

@@ -1,0 +1,19 @@
+key: ot-it-segmentation
+name: OT/ICS host placed on an IT network segment
+description: >
+  Operational technology and industrial control system hosts must be
+  isolated from general-purpose IT network segments to prevent lateral
+  movement between corporate IT compromise and safety-critical systems.
+severity: critical
+recommendation: >
+  Move the host to a dedicated OT/ICS network segment with a firewall or
+  data diode enforcing one-way or tightly filtered traffic to/from IT.
+conditions:
+  target: host
+  all:
+    - field: role
+      operator: in
+      value: [ot, ics, scada, plc]
+    - field: network_segment.zone
+      operator: eq
+      value: internal

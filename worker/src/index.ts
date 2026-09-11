@@ -1,5 +1,5 @@
 import { collectHost } from './collectors/hostCollector.js';
-import { collectNetworkInterfaces } from './collectors/networkCollector.js';
+import { collectNetworkInterfaces, collectRoutes, deriveSubnets } from './collectors/networkCollector.js';
 import { collectContainers } from './collectors/dockerCollector.js';
 import { collectServices } from './collectors/serviceCollector.js';
 import { backendApi } from './services/apiClient.js';
@@ -22,12 +22,27 @@ async function runCollectionCycle(): Promise<void> {
   });
 
   const interfaces = collectNetworkInterfaces();
+  const routes = await collectRoutes();
   await backendApi.submitConfigSnapshot({
     asset_type: 'host',
     asset_id: hostId,
     kind: 'network',
-    data: { interfaces },
+    data: { interfaces, routes },
   });
+
+  const subnets = deriveSubnets(interfaces);
+  if (subnets.length > 0) {
+    const primarySubnet = subnets[0];
+    const segment = await backendApi.upsertNetworkSegment({
+      name: `subnet-${primarySubnet}`,
+      cidr: primarySubnet,
+      zone: 'internal',
+      description: `Auto-discovered from ${hostInfo.hostname}'s network interfaces`,
+    });
+    const segmentId = (segment as { id: string }).id;
+    await backendApi.upsertHost({ ...hostInfo, network_segment_id: segmentId });
+    console.log(`[worker] linked host to network segment ${primarySubnet} (${segmentId})`);
+  }
 
   const containers = await collectContainers();
   console.log(`[worker] discovered ${containers.length} container(s)`);
@@ -57,6 +72,8 @@ async function runCollectionCycle(): Promise<void> {
       port: service.port,
       protocol: service.protocol,
       bind_address: service.bind_address,
+      banner: service.banner,
+      version: service.version,
       exposed_publicly: service.exposed_publicly,
     });
     await backendApi.submitConfigSnapshot({

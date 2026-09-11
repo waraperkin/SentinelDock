@@ -1,16 +1,21 @@
 import { apiGet } from '@/lib/api';
 import type { Risk } from '@/types/models';
 import { SeverityBadge } from '@/components/SeverityBadge';
+import { RiskHeatmap } from '@/components/RiskHeatmap';
 
 export default async function RisksPage({ searchParams }: { searchParams: { severity?: string; category?: string } }) {
   const params = new URLSearchParams();
   if (searchParams.severity) params.set('severity', searchParams.severity);
   if (searchParams.category) params.set('category', searchParams.category);
-  const risks = await apiGet<Risk[]>(`/risks${params.toString() ? `?${params}` : ''}`);
+  const [risks, allRisks] = await Promise.all([
+    apiGet<Risk[]>(`/risks${params.toString() ? `?${params}` : ''}`),
+    apiGet<Risk[]>('/risks'),
+  ]);
 
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Risks</h1>
+      <RiskHeatmap risks={allRisks} />
       <form className="flex gap-3 mb-6 text-sm">
         <select name="severity" defaultValue={searchParams.severity ?? ''} className="bg-slate-900 border border-slate-800 rounded px-2 py-1">
           <option value="">All severities</option>
@@ -22,8 +27,12 @@ export default async function RisksPage({ searchParams }: { searchParams: { seve
         <select name="category" defaultValue={searchParams.category ?? ''} className="bg-slate-900 border border-slate-800 rounded px-2 py-1">
           <option value="">All categories</option>
           <option value="exposure">Exposure</option>
+          <option value="vulnerability">Vulnerability</option>
           <option value="misconfiguration">Misconfiguration</option>
           <option value="segmentation">Segmentation</option>
+          <option value="network">Network</option>
+          <option value="container">Container</option>
+          <option value="host">Host</option>
           <option value="patching">Patching</option>
         </select>
         <button className="bg-slate-800 rounded px-3 py-1" type="submit">
