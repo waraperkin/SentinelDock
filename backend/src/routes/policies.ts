@@ -12,7 +12,11 @@ import { computeUebaAnomalies } from '../services/uebaEngine.js';
 import { scanEdrSignals } from '../services/edrEngine.js';
 import { generateSegmentationRecommendations } from '../services/segmentationEngine.js';
 import { generateHardeningRecommendations } from '../services/hardeningEngine.js';
-import { evaluatePoliciesBySegment } from '../services/distributedEvaluationEngine.js';
+import { evaluatePoliciesBySegment, planEvaluationShards } from '../services/distributedEvaluationEngine.js';
+import { computeCloudPosture } from '../services/cloudAgent.js';
+import { computeIcsPosture } from '../services/icsAgent.js';
+import { computeXdrDetections } from '../services/xdrEngine.js';
+import { generateRemediationPlans } from '../services/remediationEngine.js';
 
 /**
  * The shared downstream pipeline that must run after policy violations are
@@ -29,21 +33,32 @@ async function runDownstreamPipeline() {
   const tiMatches = await scanThreatIntel();
   const uebaAnomalies = await computeUebaAnomalies();
   const edrDetections = await scanEdrSignals();
+  const cloudPosture = await computeCloudPosture();
+  const icsPosture = await computeIcsPosture();
   const risks = await recomputeRisks();
   const attackPaths = await rebuildAttackPaths();
   const incidents = await generateIncidentScenarios();
   const segmentationRecommendations = await generateSegmentationRecommendations();
   const hardeningRecommendations = await generateHardeningRecommendations();
+  // XDR correlates across TI/EDR/UEBA/violations, so it must run after all
+  // four are up to date; remediation plans then factor in XDR correlation
+  // (see remediationEngine.ts), so it runs last.
+  const xdrDetections = await computeXdrDetections();
+  const remediationPlans = await generateRemediationPlans();
   return {
     vulnerabilities: vulnerabilities.length,
     ti_matches: tiMatches.length,
     ueba_anomalies: uebaAnomalies.length,
     edr_detections: edrDetections.length,
+    cloud_posture: cloudPosture.length,
+    ics_posture: icsPosture.length,
     risks: risks.length,
     attack_paths: attackPaths.length,
     incident_scenarios: incidents.length,
     segmentation_recommendations: segmentationRecommendations.length,
     hardening_recommendations: hardeningRecommendations.length,
+    xdr_detections: xdrDetections.length,
+    remediation_plans: remediationPlans.length,
   };
 }
 
@@ -98,16 +113,33 @@ export async function policyRoutes(app: FastifyInstance) {
     return summary;
   });
 
-  // TITAN: Distributed Evaluation Engine — same downstream pipeline, but
-  // violation detection is partitioned per network segment first (see
-  // distributedEvaluationEngine.ts for why this is an honest "map" step
-  // rather than a real multi-node claim).
+  // TITAN/GODMODE v2: Distributed Evaluation Engine — same downstream
+  // pipeline, but violation detection is partitioned per network segment
+  // first (see distributedEvaluationEngine.ts for why this is an honest
+  // "map" step rather than a real multi-node claim). Optional `shard` and
+  // `of` query params (e.g. ?shard=1&of=3) restrict this call to only its
+  // slice of segments — a real horizontally-scaled deployment runs `of`
+  // instances/scheduled calls, each with a distinct `shard` index, so no
+  // two ever process the same segment concurrently.
   app.post('/policies/evaluate/distributed', async (req) => {
-    const segmentResult = await evaluatePoliciesBySegment();
+    const { shard, of } = req.query as Record<string, string | undefined>;
+    const shardIndex = shard !== undefined ? Number(shard) : undefined;
+    const shardCount = of !== undefined ? Number(of) : undefined;
+    const segmentResult = await evaluatePoliciesBySegment(shardIndex, shardCount);
     const downstream = await runDownstreamPipeline();
     const summary = { ...segmentResult, ...downstream };
     await recordAudit('policies.evaluate.distributed', req.actor ?? 'api-token', summary);
     return summary;
+  });
+
+  // GODMODE v2: returns the segment -> shard assignment for a given shard
+  // count, without evaluating anything — lets an external orchestrator
+  // plan how many instances/scheduled calls it needs and which shard
+  // index each one should be configured with.
+  app.get('/policies/evaluate/distributed/plan', async (req) => {
+    const { of } = req.query as Record<string, string | undefined>;
+    const shardCount = of !== undefined ? Number(of) : 1;
+    return planEvaluationShards(Math.max(1, shardCount));
   });
 
   // Scans inventory for protocol_family/device_class combinations with no

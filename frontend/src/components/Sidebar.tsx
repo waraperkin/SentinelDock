@@ -129,6 +129,17 @@ const NAV_ITEMS: NavItem[] = [
       </Icon>
     ),
   },
+  {
+    href: '/godmode',
+    label: 'GODMODE',
+    icon: (
+      <Icon>
+        <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M10 6v4l3 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="10" cy="10" r="1" fill="currentColor" />
+      </Icon>
+    ),
+  },
 ];
 
 export function Sidebar() {

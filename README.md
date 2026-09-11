@@ -570,6 +570,73 @@ segment alone — so that stays centralized (the reduce step). The worker's
 leader now calls this endpoint every cycle instead of the plain
 `/policies/evaluate`.
 
+## GODMODE tier additions
+
+**Network Sandbox Engine** (`backend/src/services/sandboxEngine.ts`,
+`POST /sandbox/simulate/:attackPathId`, `GET /sandbox/simulations`) — a
+NON-DESTRUCTIVE attack simulation: it never sends a single real network
+packet. It replays an already-computed AttackPath hop by hop and
+estimates each step's success probability from the strongest applicable
+signal already collected (CVE exploitability from `vulnerabilityScanner.ts`,
+a TI match, or an ICS write-risk heuristic — falling back to a generic
+0.55 lateral-move probability), multiplies the chain, and models the
+simulated attacker giving up once the cumulative probability drops below
+3%. Pure arithmetic over existing rows, safe to run against a production
+inventory at any time. Runs are persisted (append-only) so posture
+improvement can be tracked over repeated simulations of the same path.
+Exposed in the frontend GODMODE page with a live interactive trigger.
+
+**CLOUDMASTER — the Cloud Agent** (`backend/src/services/cloudAgent.ts`,
+`GET /cloud/posture`) — aggregates the read-only IAM enumeration, cloud
+metadata reachability, and mixed-segment signals already collected
+elsewhere into one per-provider posture score, rather than leaving an
+operator to piece those signals together from separate risk rows. No live
+cloud API calls of its own.
+
+**ICSMASTER — the ICS Agent** (`backend/src/services/icsAgent.ts`,
+`GET /ics/posture`) — the same aggregation pattern for ICS/OT: per-segment
+posture from device role classification, the Modbus/BACnet write-risk
+heuristic, and zone placement. No new protocol probing — reads what
+`icsScanner.ts` already discovered.
+
+**XDR-lite** (`backend/src/services/xdrEngine.ts`, `GET /xdr/detections`) —
+multi-source correlation. Only emits a row for an asset hit by 2+
+independent detection sources (TI, EDR, UEBA, an open policy violation) —
+a single-source hit is left to that source's own view, since the actual
+value XDR adds is confidence from cross-source correlation, not
+duplicating what each engine already reports individually.
+
+**Auto-Remediation Engine** (`backend/src/services/remediationEngine.ts`,
+`GET/PATCH /remediation/plans`) — recommendations only, same as
+hardeningEngine.ts. Turns each open risk with a concrete hardening
+template into a PRIORITIZED, ordered 3-step plan (fix, verify, monitor),
+with priority boosted for XDR-correlated and threat-intel-category risks,
+so an operator can triage what to work on first instead of facing an
+undifferentiated risk list.
+
+**Zero Trust Engine v2 (dynamic segmentation)** — additive, not a rewrite:
+`zeroTrustEngine.ts`'s existing static score (zone exposure, device-class
+mixing, ICS placement, critical risks) now also folds in a
+`dynamic_signal_count` — live XDR correlations, TI matches, and recent
+(24h) UEBA anomalies on hosts in the segment — with its own reason line,
+so the score reflects current threat activity, not just static topology.
+
+**Distributed Evaluation Engine v2 (horizontal scaling)** — additive to
+the TITAN-tier engine: `evaluatePoliciesBySegment()` now accepts optional
+`shardIndex`/`shardCount` parameters. `POST /policies/evaluate/distributed?shard=I&of=N`
+restricts that call to only the segments whose
+`djb2Hash(segment.id) % N === I` (the same hashing scheme the worker
+fleet already uses in `worker/src/services/distributedLock.ts`), skipping
+the rest — so two shards never touch the same segment's violations
+concurrently, a genuine safety property, not just a label.
+`GET /policies/evaluate/distributed/plan?of=N` returns the full
+segment -> shard assignment in advance, for an external orchestrator (N
+scheduled calls, or N backend instances each configured with a distinct
+shard index) to plan its workload. The default single-instance deployment
+in this repo's `docker-compose.yml` is unaffected — the worker's leader
+still calls the unsharded (`shardCount` omitted) form every cycle; sharding
+is an opt-in capability for operators who actually run multiple instances.
+
 ## Known limitations
 
 - The attack-path builder is a simple BFS heuristic over the `dependencies`

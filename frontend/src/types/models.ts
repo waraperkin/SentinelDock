@@ -134,6 +134,8 @@ export interface SegmentZeroTrustScore {
   device_classes: string[];
   score: number;
   critical_risk_count: number;
+  /** GODMODE v2: live threat-signal count (XDR correlations + TI matches + recent UEBA anomalies) folded into the score. */
+  dynamic_signal_count: number;
   reasons: string[];
 }
 
@@ -199,6 +201,72 @@ export interface TimelineEvent {
   summary: string;
   occurred_at: string;
   cluster_id: string;
+}
+
+export interface SandboxSimulationStep {
+  hop_index: number;
+  asset_type: string;
+  asset_id: string;
+  via: string;
+  success_probability: number;
+  cumulative_probability: number;
+  compromised: boolean;
+}
+
+export interface SandboxSimulation {
+  id: string;
+  attack_path_id: string;
+  steps: SandboxSimulationStep[];
+  overall_success_probability: number;
+  hops_compromised: number;
+  created_at: string;
+}
+
+export interface CloudPosture {
+  id: string;
+  provider: string;
+  host_count: number;
+  overprivileged_role_count: number;
+  metadata_reachable_count: number;
+  mixed_segment_count: number;
+  score: number;
+  computed_at: string;
+}
+
+export interface IcsPosture {
+  id: string;
+  segment_id?: string | null;
+  segment_name: string;
+  device_count: number;
+  write_risk_count: number;
+  gateway_count: number;
+  outside_management_zone: boolean;
+  score: number;
+  computed_at: string;
+}
+
+export interface XdrDetection {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  sources: string[];
+  composite_score: number;
+  severity: Severity;
+  summary: string;
+  detected_at: string;
+}
+
+export interface RemediationPlan {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  risk_id?: string | null;
+  priority: number;
+  title: string;
+  steps: string[];
+  severity: Severity;
+  status: 'open' | 'in_progress' | 'done' | 'dismissed';
+  created_at: string;
 }
 
 export interface DashboardSummary {
