@@ -1,9 +1,16 @@
 const BASE_URL = process.env.BACKEND_API_URL ?? 'http://localhost:4000';
+// Only needed when the backend has API_TOKENS configured (auth is opt-in
+// and off by default — see backend/src/middleware/auth.ts).
+const API_TOKEN = process.env.WORKER_API_TOKEN;
 
 async function request<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (API_TOKEN) headers.authorization = `Bearer ${API_TOKEN}`;
+
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -22,5 +29,6 @@ export const backendApi = {
   upsertNetworkSegment: (segment: Record<string, unknown>) => request('/assets/network', 'POST', segment),
   submitConfigSnapshot: (snapshot: Record<string, unknown>) => request('/configs', 'POST', snapshot),
   submitSecretFindings: (findings: Array<Record<string, unknown>>) => request('/secrets', 'POST', { findings }),
+  heartbeat: (payload: Record<string, unknown>) => request('/workers/heartbeat', 'POST', payload),
   triggerEvaluation: () => request('/policies/evaluate', 'POST'),
 };

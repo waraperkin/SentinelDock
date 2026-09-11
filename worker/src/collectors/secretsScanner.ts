@@ -1,5 +1,5 @@
 export interface SecretMatch {
-  kind: 'aws_access_key' | 'private_key' | 'generic_api_key' | 'generic_password';
+  kind: 'aws_access_key' | 'private_key' | 'generic_api_key' | 'generic_password' | 'high_entropy_string';
   matchPreview: string;
   severity: 'medium' | 'high' | 'critical';
 }
@@ -18,18 +18,54 @@ function redact(value: string): string {
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-2)} (${trimmed.length} chars)`;
 }
 
+/** Shannon entropy in bits/character — high entropy is a signal of random-looking data (tokens, keys) vs. natural text/identifiers. */
+export function shannonEntropy(text: string): number {
+  const counts = new Map<string, number>();
+  for (const ch of text) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / text.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+/**
+ * Flags long, mixed-case alphanumeric strings with high Shannon entropy —
+ * the shape of a generic API token/secret that doesn't match any known
+ * provider format. Deliberately conservative (length >= 32, requires both
+ * upper/lowercase letters AND digits, entropy threshold tuned above what
+ * natural-language text or simple identifiers produce) to avoid flagging
+ * UUIDs, git SHAs, or ordinary env values as false positives.
+ */
+function detectHighEntropyString(text: string): SecretMatch | null {
+  const trimmed = text.trim();
+  if (trimmed.length < 32 || trimmed.length > 256) return null;
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(trimmed)) return null;
+  if (!/[a-z]/.test(trimmed) || !/[A-Z]/.test(trimmed) || !/[0-9]/.test(trimmed)) return null;
+  const entropy = shannonEntropy(trimmed);
+  if (entropy < 4.0) return null;
+  return { kind: 'high_entropy_string', matchPreview: redact(trimmed), severity: 'medium' };
+}
+
 /**
  * Scans a piece of text (env var value, banner, config content) for common
- * secret patterns. Local, offline, regex-based — not a replacement for a
- * dedicated secrets-scanning product (e.g. entropy analysis, provider-
- * specific key formats beyond AWS), but it catches the highest-signal,
- * most common cases without any external service call.
+ * secret patterns. Local, offline — known-format regex patterns (AWS keys,
+ * PEM headers, api_key/password assignments) plus a conservative Shannon-
+ * entropy heuristic for generic high-entropy tokens that don't match any
+ * known provider format. Not a replacement for a dedicated secrets-
+ * scanning product, but it catches the highest-signal, most common cases
+ * without any external service call.
  */
 export function scanTextForSecrets(text: string): SecretMatch[] {
   const matches: SecretMatch[] = [];
   for (const pattern of PATTERNS) {
     const match = text.match(pattern.regex);
     if (match) matches.push({ kind: pattern.kind, matchPreview: redact(match[0]), severity: pattern.severity });
+  }
+  if (matches.length === 0) {
+    const entropyMatch = detectHighEntropyString(text);
+    if (entropyMatch) matches.push(entropyMatch);
   }
   return matches;
 }

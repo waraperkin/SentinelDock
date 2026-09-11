@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scanTextForSecrets } from './secretsScanner.js';
+import { scanTextForSecrets, shannonEntropy } from './secretsScanner.js';
 
 // Built by concatenation rather than as a literal so this well-known AWS
 // documentation example key (used in AWS's own docs as a placeholder) isn't
@@ -34,4 +34,25 @@ test('scanTextForSecrets never includes the full secret value in the preview', (
 
 test('scanTextForSecrets returns no matches for plain non-secret text', () => {
   assert.deepEqual(scanTextForSecrets('NODE_ENV=production'), []);
+});
+
+test('shannonEntropy is low for repetitive text and high for random-looking text', () => {
+  assert.ok(shannonEntropy('aaaaaaaaaaaaaaaa') < 1);
+  assert.ok(shannonEntropy('xK9pQ2mR7vL4nB8w') > 3.5);
+});
+
+test('scanTextForSecrets flags a long high-entropy mixed-case alphanumeric string with no known-pattern match', () => {
+  const highEntropyValue = 'xK9pQ2mR7vL4nB8wZt3cF6hJ1sD5gA0y';
+  const matches = scanTextForSecrets(highEntropyValue);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].kind, 'high_entropy_string');
+});
+
+test('scanTextForSecrets does not flag a plain UUID (low entropy relative to threshold, or too structured)', () => {
+  const matches = scanTextForSecrets('550e8400-e29b-41d4-a716-446655440000');
+  assert.deepEqual(matches, []);
+});
+
+test('scanTextForSecrets does not flag short values even if mixed-case alphanumeric', () => {
+  assert.deepEqual(scanTextForSecrets('Ab3xY9'), []);
 });

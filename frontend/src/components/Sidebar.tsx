@@ -97,6 +97,17 @@ const NAV_ITEMS: NavItem[] = [
       </Icon>
     ),
   },
+  {
+    href: '/workers',
+    label: 'Workers',
+    icon: (
+      <Icon>
+        <rect x="3" y="4" width="14" height="9" rx="1.3" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M7 17h6M10 13v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <circle cx="6.5" cy="8.5" r="1" fill="currentColor" />
+      </Icon>
+    ),
+  },
 ];
 
 export function Sidebar() {

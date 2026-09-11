@@ -101,6 +101,17 @@ export interface SecretFinding {
   detected_at: string;
 }
 
+export interface WorkerNode {
+  id: string;
+  worker_id: string;
+  hostname: string;
+  is_leader: boolean;
+  last_cycle_summary: Record<string, number> | null;
+  first_seen_at: string;
+  last_heartbeat_at: string;
+  online: boolean;
+}
+
 export interface AttackPathGraph {
   nodes: Array<{ id: string; type: string }>;
   edges: Array<{ source: string; target: string; via: string; severity: string; path_id: string }>;

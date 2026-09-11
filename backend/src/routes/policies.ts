@@ -5,6 +5,7 @@ import { recomputeRisks } from '../services/riskEngine.js';
 import { rebuildAttackPaths } from '../services/attackPathEngine.js';
 import { generateIncidentScenarios } from '../services/incidentEngine.js';
 import { scanVulnerabilities } from '../services/vulnerabilityScanner.js';
+import { recordAudit } from '../services/audit.js';
 
 export async function policyRoutes(app: FastifyInstance) {
   app.get('/policies', async () => query('SELECT * FROM policies ORDER BY severity DESC, key'));
@@ -47,19 +48,21 @@ export async function policyRoutes(app: FastifyInstance) {
   });
 
   // Runs the full evaluation pipeline: violations -> vulnerabilities -> risks -> attack paths -> incidents.
-  app.post('/policies/evaluate', async () => {
+  app.post('/policies/evaluate', async (req) => {
     const violations = await evaluatePolicies();
     const vulnerabilities = await scanVulnerabilities();
     const risks = await recomputeRisks();
     const attackPaths = await rebuildAttackPaths();
     const incidents = await generateIncidentScenarios();
-    return {
+    const summary = {
       violations: violations.length,
       vulnerabilities: vulnerabilities.length,
       risks: risks.length,
       attack_paths: attackPaths.length,
       incident_scenarios: incidents.length,
     };
+    await recordAudit('policies.evaluate', req.actor ?? 'api-token', summary);
+    return summary;
   });
 
   // ---- Violations ----

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { query, queryOne } from '../db/pool.js';
+import { recordAudit } from '../services/audit.js';
 
 export async function secretRoutes(app: FastifyInstance) {
   app.get('/secrets', async (req) => {
@@ -31,6 +32,9 @@ export async function secretRoutes(app: FastifyInstance) {
         [f.asset_type, f.asset_id, f.kind, f.match_preview, f.source, f.severity ?? 'high'],
       );
       inserted.push(row);
+    }
+    if (inserted.length > 0) {
+      await recordAudit('secrets.ingest', req.actor ?? 'api-token', { count: inserted.length, kinds: inserted.map((r: any) => r.kind) });
     }
     return reply.code(201).send(inserted);
   });

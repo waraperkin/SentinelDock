@@ -1,0 +1,19 @@
+key: git-repository-exposed
+name: Exposed .git repository
+description: >
+  A web server's document root appears to be a git checkout with the
+  .git directory publicly reachable (confirmed via a real GET request to
+  /.git/HEAD returning a valid git ref). This commonly leaks full source
+  history, including secrets that were removed from the current tree but
+  remain in git history.
+severity: critical
+recommendation: >
+  Remove the .git directory from the web root entirely, or add a web
+  server rule blocking access to dotfiles/.git. Rotate any credentials
+  that may have ever been committed, even if since removed.
+conditions:
+  target: service
+  all:
+    - field: name
+      operator: eq
+      value: git-exposed

@@ -8,10 +8,15 @@ import { attackPathRoutes } from './routes/attackPaths.js';
 import { incidentRoutes } from './routes/incidents.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { secretRoutes } from './routes/secrets.js';
+import { workerRoutes } from './routes/workers.js';
+import { auditRoutes } from './routes/audit.js';
+import { registerAuth } from './middleware/auth.js';
 
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true });
+
+registerAuth(app);
 
 app.get('/health', async () => ({ status: 'ok' }));
 
@@ -23,6 +28,8 @@ await app.register(attackPathRoutes);
 await app.register(incidentRoutes);
 await app.register(dashboardRoutes);
 await app.register(secretRoutes);
+await app.register(workerRoutes);
+await app.register(auditRoutes);
 
 const port = Number(process.env.BACKEND_PORT ?? 4000);
 

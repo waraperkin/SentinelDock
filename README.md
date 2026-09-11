@@ -105,6 +105,15 @@ All endpoints are served by the backend on `BACKEND_PORT` (default 4000).
 ### Dashboard
 - `GET /dashboard/summary` — asset counts, global risk score, open violation count, incident scenario count
 
+### Workers
+- `GET /workers` — list all worker nodes that have ever heartbeated, with a derived `online` flag
+- `POST /workers/heartbeat` — upserts a worker's heartbeat row by `worker_id`
+
+### Audit log
+- `GET /audit-log?action=&limit=` — list recorded mutating actions (default limit 100, max 500)
+
+All mutating endpoints (POST/PATCH/PUT/DELETE) require `Authorization: Bearer <token>` when `API_TOKENS` is set on the backend; unset (the default), no auth is enforced.
+
 ## Policy format
 
 Policies live in `policies/*.yaml` (human-editable source) and are stored
@@ -276,6 +285,47 @@ prevents duplicate concurrent scans; it does **not** yet split work across
 replicas (e.g. one subnet per replica) — that needs dynamic replica
 membership tracking, which is a natural next step, not implemented here.
 
+## OMEGA tier additions
+
+**Distributed worker visibility** (`worker_nodes` table, `GET /workers`,
+`POST /workers/heartbeat`, `frontend/src/app/workers/page.tsx`) — every
+worker replica heartbeats every poll cycle (leader or not, per the
+existing Redis distributed lock), so scaling with
+`docker compose up -d --scale worker=3` shows the full fleet, which one
+currently holds the leader lock, and each replica's last cycle summary.
+This is real fleet *visibility*; it is not distributed *work-splitting* —
+see the "Distributed worker coordination" note under Ultra tier below for
+what that would additionally require.
+
+**Opt-in API token auth + audit log** (`backend/src/middleware/auth.ts`,
+`audit_log` table, `GET /audit-log`) — set `API_TOKENS` (comma-separated
+`name:token` pairs) to require a bearer token on every mutating
+(POST/PATCH/PUT/DELETE) request; unset (the default) runs with no
+enforcement, so the out-of-the-box `docker compose up` flow keeps working
+without extra configuration. `policies.evaluate` and `secrets.ingest`
+calls are recorded to `audit_log` with the calling token's name (or
+`api-token` when auth is disabled). This is a real, testable auth
+primitive — **not** a full multi-tenant RBAC system: there is no
+per-resource authorization, no roles, no tenants, just "does this request
+carry a known token". A true RBAC/multi-tenant model would need a much
+larger identity/session/tenant-scoping layer than this iteration adds.
+
+**Entropy-based secrets detection** (`worker/src/collectors/secretsScanner.ts`)
+— beyond the known-format regexes (AWS keys, PEM headers, `api_key`/
+`password` assignments), a conservative Shannon-entropy heuristic now
+flags long (32-256 char) mixed-case alphanumeric strings with entropy
+above what natural text or plain identifiers (UUIDs, hashes) produce —
+catching generic high-entropy tokens that don't match any known provider
+format, without flagging routine non-secret values.
+
+**Real HTTP-layer recon** (`worker/src/collectors/httpReconScanner.ts`) —
+identifies Jenkins via its `X-Jenkins` response header (present on
+virtually every Jenkins HTTP response, no auth required to detect) and
+checks for an exposed `.git/HEAD` — an extremely common real-world
+misconfiguration that leaks full source history when a web root is a git
+checkout. Feeds the existing DevOps policy (Jenkins) and a new
+`git-repository-exposed` policy.
+
 ## Ultra tier additions
 
 **SNMPv2c inventory** (`worker/src/collectors/snmpScanner.ts`) — a real
@@ -390,6 +440,7 @@ Beyond the five baseline examples, `policies/` also includes:
 10. `iam-privileged-role-exposed.yaml` — a high/critical asset can reach cloud metadata (proxy signal to review its IAM role)
 11. `critical-host-flat-network.yaml` — a critical host with no dedicated management-segment isolation
 12. `devops-cicd-exposed.yaml` — a publicly-reachable CI/CD service (Jenkins/GitLab Runner)
+13. `git-repository-exposed.yaml` — a confirmed exposed `.git/HEAD` on a web server
 
 ## Risk categories
 

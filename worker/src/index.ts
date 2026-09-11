@@ -10,8 +10,11 @@ import { scanTextForSecrets } from './collectors/secretsScanner.js';
 import { scanSnmp } from './collectors/snmpScanner.js';
 import { scanNetbios } from './collectors/netbiosScanner.js';
 import { discoverMdnsServices } from './collectors/mdnsScanner.js';
+import { httpRecon } from './collectors/httpReconScanner.js';
 import { backendApi } from './services/apiClient.js';
 import { withCollectionCycleLock, workerId } from './services/distributedLock.js';
+
+const HTTP_LIKE_PORTS = new Set([80, 443, 8080, 8443]);
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 60_000);
 const SUBNET_SCAN_ENABLED = process.env.WORKER_SUBNET_SCAN_ENABLED !== 'false';
@@ -95,14 +98,32 @@ async function registerDiscoveredDevice(device: DiscoveredDevice, segmentId: str
 
   for (const port of device.openPorts) {
     const ics = confirmedIcsPorts.get(port);
+    let name = ics?.name ?? PORT_NAMES[port] ?? `port-${port}`;
+    let protocolFamily: string | null = ics?.protocolFamily ?? null;
+
+    if (!ics && HTTP_LIKE_PORTS.has(port)) {
+      const recon = await httpRecon(device.ip, port).catch(() => []);
+      const jenkins = recon.find((r) => r.finding === 'jenkins');
+      const gitExposed = recon.find((r) => r.finding === 'git-exposed');
+      if (jenkins) {
+        name = 'jenkins';
+        protocolFamily = 'devops';
+        console.log(`[worker] HTTP recon: Jenkins identified at ${device.ip}:${port}`);
+      } else if (gitExposed) {
+        name = 'git-exposed';
+        protocolFamily = 'devops';
+        console.log(`[worker] HTTP recon: exposed .git found at ${device.ip}:${port}`);
+      }
+    }
+
     await backendApi.upsertService({
       host_id: hostId,
-      name: ics?.name ?? PORT_NAMES[port] ?? `port-${port}`,
+      name,
       port,
       protocol: 'tcp',
       bind_address: device.ip,
       exposed_publicly: true,
-      protocol_family: ics?.protocolFamily ?? null,
+      protocol_family: protocolFamily,
     });
   }
 }
@@ -229,7 +250,7 @@ function findGatewayForSubnet(routes: Array<{ destination: string; gateway: stri
   return routes.find((r) => r.destination === 'default' && r.gateway)?.gateway ?? null;
 }
 
-async function runCollectionCycle(): Promise<void> {
+async function runCollectionCycle(): Promise<unknown> {
   console.log('[worker] starting collection cycle');
 
   const hostInfo = collectHost();
@@ -343,6 +364,20 @@ async function runCollectionCycle(): Promise<void> {
 
   const summary = await backendApi.triggerEvaluation();
   console.log('[worker] evaluation complete', summary);
+  return summary;
+}
+
+async function sendHeartbeat(isLeader: boolean, lastCycleSummary: unknown): Promise<void> {
+  try {
+    await backendApi.heartbeat({
+      worker_id: workerId(),
+      hostname: process.env.WORKER_HOSTNAME_OVERRIDE?.trim() || 'sentineldock-worker',
+      is_leader: isLeader,
+      last_cycle_summary: lastCycleSummary ?? null,
+    });
+  } catch (err) {
+    console.warn('[worker] heartbeat failed (non-fatal)', (err as Error).message);
+  }
 }
 
 async function loop(): Promise<void> {
@@ -350,10 +385,15 @@ async function loop(): Promise<void> {
     // Coordinates across horizontally-scaled worker replicas via Redis so
     // only one replica runs a given cycle (see distributedLock.ts). The
     // lock TTL is generously longer than the poll interval so a slow cycle
-    // never causes two replicas to run concurrently.
-    await withCollectionCycleLock(POLL_INTERVAL_MS * 2, runCollectionCycle);
+    // never causes two replicas to run concurrently. Every replica still
+    // heartbeats every tick (leader or not) so /workers shows the full
+    // fleet, not just whichever one is currently active.
+    const result = await withCollectionCycleLock(POLL_INTERVAL_MS * 2, runCollectionCycle);
+    const isLeader = result !== 'skipped-not-leader';
+    await sendHeartbeat(isLeader, isLeader ? result : null);
   } catch (err) {
     console.error('[worker] collection cycle failed', err);
+    await sendHeartbeat(false, null);
   } finally {
     setTimeout(loop, POLL_INTERVAL_MS);
   }

@@ -28,6 +28,7 @@ const POLICY_KEY_CATEGORY: Record<string, Risk['category']> = {
   'cloud-metadata-reachable': 'cloud',
   'iam-privileged-role-exposed': 'cloud',
   'devops-cicd-exposed': 'devops',
+  'git-repository-exposed': 'devops',
 };
 
 export function categoryForViolation(violation: ViolationWithPolicyKey): Risk['category'] {

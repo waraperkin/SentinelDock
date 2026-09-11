@@ -2,6 +2,24 @@ export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type Criticality = Severity;
 export type AssetType = 'host' | 'container' | 'service' | 'network';
 
+export interface WorkerNode {
+  id: string;
+  worker_id: string;
+  hostname: string;
+  is_leader: boolean;
+  last_cycle_summary: Record<string, unknown> | null;
+  first_seen_at: string;
+  last_heartbeat_at: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  actor: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface NetworkSegment {
   id: string;
   name: string;
@@ -157,7 +175,7 @@ export interface SecretFinding {
   id: string;
   asset_type: AssetType;
   asset_id: string;
-  kind: 'aws_access_key' | 'private_key' | 'generic_api_key' | 'generic_password';
+  kind: 'aws_access_key' | 'private_key' | 'generic_api_key' | 'generic_password' | 'high_entropy_string';
   match_preview: string;
   source: string;
   severity: Severity;
