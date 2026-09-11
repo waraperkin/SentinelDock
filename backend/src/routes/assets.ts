@@ -21,7 +21,16 @@ async function linkServiceDependencies(service: { id: string; host_id?: string |
 
 export async function assetRoutes(app: FastifyInstance) {
   // ---- Hosts ----
-  app.get('/assets/hosts', async () => query('SELECT * FROM hosts ORDER BY hostname'));
+  // SOVEREIGN tier: an optional ?tenant_id= filter, or (when the caller
+  // authenticated with a tenant-scoped SOVEREIGN token) an implicit scope
+  // to that tenant — additive on top of the existing unscoped listing,
+  // which single-tenant deployments keep using unchanged.
+  app.get('/assets/hosts', async (req) => {
+    const { tenant_id } = req.query as Record<string, string | undefined>;
+    const scope = tenant_id ?? req.tenantId;
+    if (scope) return query('SELECT * FROM hosts WHERE tenant_id = $1 ORDER BY hostname', [scope]);
+    return query('SELECT * FROM hosts ORDER BY hostname');
+  });
 
   app.get('/assets/hosts/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -56,8 +65,8 @@ export async function assetRoutes(app: FastifyInstance) {
       return reply.code(200).send(row);
     }
     const row = await queryOne(
-      `INSERT INTO hosts (hostname, os, os_version, ip_address, role, network_segment_id, criticality, device_class, last_seen)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now()) RETURNING *`,
+      `INSERT INTO hosts (hostname, os, os_version, ip_address, role, network_segment_id, criticality, device_class, tenant_id, last_seen)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now()) RETURNING *`,
       [
         b.hostname,
         b.os ?? null,
@@ -67,6 +76,7 @@ export async function assetRoutes(app: FastifyInstance) {
         b.network_segment_id ?? null,
         b.criticality ?? 'medium',
         b.device_class ?? 'it',
+        (b.tenant_id as string | undefined) ?? req.tenantId ?? null,
       ],
     );
     if (row?.network_segment_id) await ensureDependency('host', row.id, 'network', row.network_segment_id, 'member_of');
@@ -177,7 +187,13 @@ export async function assetRoutes(app: FastifyInstance) {
   });
 
   // ---- Network segments ----
-  app.get('/assets/network', async () => query('SELECT * FROM network_segments ORDER BY name'));
+  // SOVEREIGN tier: same additive tenant scoping as /assets/hosts above.
+  app.get('/assets/network', async (req) => {
+    const { tenant_id } = req.query as Record<string, string | undefined>;
+    const scope = tenant_id ?? req.tenantId;
+    if (scope) return query('SELECT * FROM network_segments WHERE tenant_id = $1 ORDER BY name', [scope]);
+    return query('SELECT * FROM network_segments ORDER BY name');
+  });
 
   app.get('/assets/network/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -200,8 +216,8 @@ export async function assetRoutes(app: FastifyInstance) {
       return reply.code(200).send(row);
     }
     const row = await queryOne(
-      `INSERT INTO network_segments (name, cidr, zone, description) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [b.name, b.cidr, b.zone ?? 'internal', b.description ?? null],
+      `INSERT INTO network_segments (name, cidr, zone, description, tenant_id) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [b.name, b.cidr, b.zone ?? 'internal', b.description ?? null, (b.tenant_id as string | undefined) ?? req.tenantId ?? null],
     );
     return reply.code(201).send(row);
   });

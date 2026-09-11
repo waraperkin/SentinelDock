@@ -1,7 +1,8 @@
 import { apiGet } from '@/lib/api';
 import { SeverityBadge } from '@/components/SeverityBadge';
 import { SandboxSimulator } from '@/components/SandboxSimulator';
-import type { AttackPath, CloudPosture, IcsPosture, XdrDetection, RemediationPlan } from '@/types/models';
+import { SimulationCampaignRunner } from '@/components/SimulationCampaignRunner';
+import type { AttackPath, CloudPosture, IcsPosture, XdrDetection, RemediationPlan, SimulationCampaign, QuantumTrend, QuantumOutlier } from '@/types/models';
 
 function scoreColor(score: number): string {
   if (score >= 70) return '#ef4a5f';
@@ -11,12 +12,15 @@ function scoreColor(score: number): string {
 }
 
 export default async function GodmodePage() {
-  const [paths, cloudPosture, icsPosture, xdr, remediation] = await Promise.all([
+  const [paths, cloudPosture, icsPosture, xdr, remediation, campaigns, trend, outliers] = await Promise.all([
     apiGet<AttackPath[]>('/attack-paths'),
     apiGet<CloudPosture[]>('/cloud/posture'),
     apiGet<IcsPosture[]>('/ics/posture'),
     apiGet<XdrDetection[]>('/xdr/detections'),
     apiGet<RemediationPlan[]>('/remediation/plans?status=open'),
+    apiGet<SimulationCampaign[]>('/simulation/campaigns'),
+    apiGet<QuantumTrend>('/quantum/trend'),
+    apiGet<QuantumOutlier[]>('/quantum/outliers'),
   ]);
 
   return (
@@ -36,6 +40,11 @@ export default async function GodmodePage() {
         ) : (
           <div className="sd-panel p-5 text-sm text-[var(--sd-text-muted)]">No attack paths yet to simulate against.</div>
         )}
+      </section>
+
+      <section className="mb-10">
+        <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">Attack Simulation Engine — full-fleet campaign</h2>
+        <SimulationCampaignRunner initial={campaigns} />
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
@@ -115,6 +124,43 @@ export default async function GodmodePage() {
           </div>
         </section>
       </div>
+
+      <section>
+        <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">
+          QUANTUM Engine — local statistical analysis
+          <span className="ml-2 text-xs font-normal text-[var(--sd-text-muted)]">(classical statistics, not quantum computing)</span>
+        </h2>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="sd-panel p-5">
+            <h3 className="text-xs font-semibold text-[var(--sd-text-muted)] uppercase tracking-wide mb-3">Risk score trend</h3>
+            {trend.message ? (
+              <p className="text-sm text-[var(--sd-text-muted)]">{trend.message}</p>
+            ) : (
+              <div>
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span className="text-2xl font-semibold sd-mono text-[var(--sd-text-primary)]">{trend.current_score}</span>
+                  <span className="text-xs text-[var(--sd-text-muted)] uppercase tracking-wide">{trend.direction}</span>
+                </div>
+                <p className="text-xs text-[var(--sd-text-muted)]">
+                  Forecast next sample: {trend.forecast_next} · slope {trend.slope} over {trend.samples} sample(s)
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="sd-panel divide-y divide-[var(--sd-border)]">
+            <h3 className="text-xs font-semibold text-[var(--sd-text-muted)] uppercase tracking-wide px-5 py-3">Statistical outliers (z-score)</h3>
+            {outliers.slice(0, 6).map((o) => (
+              <div key={o.id} className="px-5 py-3 flex items-center justify-between text-sm">
+                <span className="text-[var(--sd-text-primary)] sd-mono text-xs truncate">
+                  {o.asset_type}:{o.asset_id}
+                </span>
+                <span className="text-xs text-[var(--sd-text-muted)]">z={o.z_score} (score {o.score}, fleet mean {o.mean})</span>
+              </div>
+            ))}
+            {outliers.length === 0 && <p className="px-5 py-6 text-sm text-[var(--sd-text-muted)]">No statistical outliers in the current risk distribution.</p>}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { computeCloudPosture } from '../services/cloudAgent.js';
 import { computeIcsPosture } from '../services/icsAgent.js';
 import { computeXdrDetections } from '../services/xdrEngine.js';
 import { generateRemediationPlans } from '../services/remediationEngine.js';
+import { recordRiskScoreSnapshot, computeQuantumOutliers } from '../services/quantumEngine.js';
 
 /**
  * The shared downstream pipeline that must run after policy violations are
@@ -45,6 +46,11 @@ async function runDownstreamPipeline() {
   // (see remediationEngine.ts), so it runs last.
   const xdrDetections = await computeXdrDetections();
   const remediationPlans = await generateRemediationPlans();
+  // GODMODE+: QUANTUM Engine — sample the global risk score for the trend
+  // time series, then flag statistical outliers against the now-final
+  // risk distribution for this cycle.
+  await recordRiskScoreSnapshot();
+  const quantumOutliers = await computeQuantumOutliers();
   return {
     vulnerabilities: vulnerabilities.length,
     ti_matches: tiMatches.length,
@@ -59,6 +65,7 @@ async function runDownstreamPipeline() {
     hardening_recommendations: hardeningRecommendations.length,
     xdr_detections: xdrDetections.length,
     remediation_plans: remediationPlans.length,
+    quantum_outliers: quantumOutliers.length,
   };
 }
 

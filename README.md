@@ -637,6 +637,80 @@ in this repo's `docker-compose.yml` is unaffected — the worker's leader
 still calls the unsharded (`shardCount` omitted) form every cycle; sharding
 is an opt-in capability for operators who actually run multiple instances.
 
+## GODMODE+ tier additions
+
+**Attack Simulation Engine** (`backend/src/services/attackSimulationEngine.ts`,
+`POST /simulation/campaigns/run`, `GET /simulation/campaigns`) — does not
+introduce a new simulation mechanism: it batches the existing (non-
+destructive) Network Sandbox Engine across EVERY currently-persisted
+attack path in one run, covering whatever domains those paths span
+(network/ICS/cloud/DevOps, via the multi-layer graph's `layer`
+classification), and aggregates the results into one fleet-wide exposure
+summary (path count, average and worst-case success probability, which
+path is worst) instead of requiring an operator to simulate paths one at
+a time. Still pure arithmetic over existing data — never touches the real
+network.
+
+**QUANTUM Engine** (`backend/src/services/quantumEngine.ts`,
+`GET /quantum/trend`, `GET /quantum/outliers`) — **local statistical
+analysis, explicitly NOT quantum computing.** Despite the tier name (kept
+to match this project's established naming convention — TITAN, OMEGA,
+GODMODE, …), this is classical statistics computed entirely in-process,
+no external ML service, no GPU: ordinary least-squares linear regression
+over a new append-only `risk_score_snapshots` time series (sampled once
+per evaluation cycle) forecasts the next global-risk-score sample and
+labels the trend increasing/decreasing/stable; a z-score pass over the
+current risk-score distribution flags statistical outliers — an asset
+that's unusually extreme relative to everything else observed right now,
+a different signal than severity alone. The regression math is exported
+standalone (`linearRegressionTrend`) and unit-tested without any database
+involved.
+
+**SOVEREIGN Engine** (`backend/src/services/rbac.ts`,
+`backend/src/routes/sovereign.ts`, `POST/GET/DELETE /sovereign/tenants`,
+`/sovereign/tokens`) — DB-backed, revocable, role-aware (admin/analyst/
+readonly) API tokens and optional tenant scoping, layered ADDITIVELY on
+top of the existing opt-in `API_TOKENS` env-var mechanism
+(`backend/src/middleware/auth.ts`), which is completely unchanged and
+still works standalone. A token is never stored raw — only its sha256
+hash — and is returned in full exactly once, at creation. Tenant scoping
+is applied to the core asset tables (`hosts`, `network_segments`: a
+nullable `tenant_id` column, additive migration, `NULL` = default/global
+tenant so no existing deployment needs any migration action) and their
+`GET`/`POST` routes in `assets.ts` — not yet threaded through every other
+subsystem (risks, secrets, etc.), which is an honest scope limit for this
+iteration, not a claim of full multi-tenant isolation everywhere.
+Unlike the rest of this platform's "opt-in, never rejects by default"
+auth philosophy, the new `/sovereign/*` management routes are STRICTLY
+gated by `requireRole('admin')` (401 with no token, 403 with an
+insufficient role) — there's no legacy default-open behavior to preserve
+on a brand-new privileged surface. To bootstrap SOVEREIGN at all, an
+operator first authenticates with an env-var `API_TOKENS` admin token
+(treated as full "admin", matching its pre-existing unrestricted
+behavior) to mint the first DB-backed token. A minimal admin console
+lives at `/sovereign` in the frontend — the entered token is kept only in
+that browser tab's memory, never persisted.
+
+**OMNIPOTENT Agent** (`worker/src/collectors/omnipotentAgent.ts`,
+`WORKER_OMNIPOTENT_ENABLED`, opt-in, **off by default**) — **honesty note:
+despite the requested "kernel-level" framing, this is deliberately NOT a
+kernel module and NOT eBPF.** A real kernel-level agent needs
+CAP_SYS_ADMIN/CAP_BPF, kernel headers matching the exact running kernel,
+and carries genuine stability/security risk to ship untested in a
+general-purpose project — out of scope here, the same way this project
+declined other genuinely risky asks (e.g. live ICS writes, see the ICS/OT
+section above). What IS real and shipped: standard `/proc` filesystem
+parsing (the same mechanism `ps`/`netstat` use) — process list and TCP
+socket state, read entirely from inside the worker container's own PID
+and network namespaces. Unless the container is explicitly run with host
+PID/network namespace sharing (**not** configured by default in this
+repo's `docker-compose.yml`, since that would change the security
+posture of the whole stack without explicit operator opt-in), this only
+sees the worker container's own processes/sockets — never the Docker
+host's other containers or the host kernel itself. Findings are submitted
+as a `config_snapshots` row (`kind = 'omnipotent-agent'`); the pure
+`/proc/net/tcp` parser is unit-tested against fixture data.
+
 ## Known limitations
 
 - The attack-path builder is a simple BFS heuristic over the `dependencies`

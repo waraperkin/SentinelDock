@@ -140,6 +140,16 @@ const NAV_ITEMS: NavItem[] = [
       </Icon>
     ),
   },
+  {
+    href: '/sovereign',
+    label: 'SOVEREIGN',
+    icon: (
+      <Icon>
+        <path d="M10 2.5 3.5 5.5v4.3c0 4 2.8 6.9 6.5 7.7 3.7-.8 6.5-3.7 6.5-7.7V5.5L10 2.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M10 6.5v4M10 13v.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </Icon>
+    ),
+  },
 ];
 
 export function Sidebar() {

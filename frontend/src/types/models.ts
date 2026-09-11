@@ -278,3 +278,51 @@ export interface DashboardSummary {
   open_violations: number;
   incident_scenarios: number;
 }
+
+export interface SimulationCampaign {
+  id: string;
+  path_count: number;
+  avg_success_probability: number;
+  max_success_probability: number;
+  worst_attack_path_id?: string | null;
+  simulation_ids: string[];
+  created_at: string;
+}
+
+export interface QuantumTrend {
+  samples: number;
+  slope: number;
+  current_score: number;
+  forecast_next: number;
+  direction: 'increasing' | 'decreasing' | 'stable';
+  message?: string;
+}
+
+export interface QuantumOutlier {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  score: number;
+  mean: number;
+  stddev: number;
+  z_score: number;
+  computed_at: string;
+}
+
+export type Role = 'admin' | 'analyst' | 'readonly';
+
+export interface Tenant {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface AuthToken {
+  id: string;
+  name: string;
+  role: Role;
+  tenant_id?: string | null;
+  created_at: string;
+  revoked_at?: string | null;
+}

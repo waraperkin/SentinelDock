@@ -26,6 +26,8 @@ export interface NetworkSegment {
   cidr: string;
   zone: 'internal' | 'dmz' | 'public' | 'management';
   description?: string | null;
+  /** SOVEREIGN tier: nullable tenant scope — null means the default/global tenant (existing single-tenant deployments need no migration action). */
+  tenant_id?: string | null;
   created_at: string;
 }
 
@@ -39,6 +41,8 @@ export interface Host {
   network_segment_id?: string | null;
   criticality: Criticality;
   device_class: 'it' | 'ics' | 'cloud';
+  /** SOVEREIGN tier: nullable tenant scope — null means the default/global tenant. */
+  tenant_id?: string | null;
   last_seen?: string | null;
   created_at: string;
   updated_at: string;
@@ -338,4 +342,58 @@ export interface RemediationPlan {
   severity: Severity;
   status: 'open' | 'in_progress' | 'done' | 'dismissed';
   created_at: string;
+}
+
+export interface SimulationCampaign {
+  id: string;
+  path_count: number;
+  avg_success_probability: number;
+  max_success_probability: number;
+  worst_attack_path_id?: string | null;
+  simulation_ids: string[];
+  created_at: string;
+}
+
+export interface RiskScoreSnapshot {
+  id: string;
+  global_score: number;
+  risk_count: number;
+  recorded_at: string;
+}
+
+export interface QuantumTrend {
+  samples: number;
+  slope: number;
+  current_score: number;
+  forecast_next: number;
+  direction: 'increasing' | 'decreasing' | 'stable';
+}
+
+export interface QuantumOutlier {
+  id: string;
+  asset_type: AssetType;
+  asset_id: string;
+  score: number;
+  mean: number;
+  stddev: number;
+  z_score: number;
+  computed_at: string;
+}
+
+export type Role = 'admin' | 'analyst' | 'readonly';
+
+export interface Tenant {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
+
+export interface AuthToken {
+  id: string;
+  name: string;
+  role: Role;
+  tenant_id?: string | null;
+  created_at: string;
+  revoked_at?: string | null;
 }

@@ -11,6 +11,7 @@ import { scanSnmp } from './collectors/snmpScanner.js';
 import { scanNetbios } from './collectors/netbiosScanner.js';
 import { discoverMdnsServices } from './collectors/mdnsScanner.js';
 import { httpRecon } from './collectors/httpReconScanner.js';
+import { collectOmnipotentSnapshot } from './collectors/omnipotentAgent.js';
 import { backendApi } from './services/apiClient.js';
 import { withCollectionCycleLock, workerId, shardWorkItems } from './services/distributedLock.js';
 
@@ -344,6 +345,16 @@ async function runCollectionCycle(): Promise<void> {
   }
 
   await checkCloudMetadataExposure(hostId);
+
+  // GODMODE+: OMNIPOTENT Agent — opt-in, off by default (see
+  // omnipotentAgent.ts for the honest scope: /proc introspection of this
+  // worker container's own PID/network namespace, NOT a kernel module or
+  // host-wide visibility).
+  const omnipotentSnapshot = await collectOmnipotentSnapshot();
+  if (omnipotentSnapshot) {
+    await backendApi.submitConfigSnapshot({ asset_type: 'host', asset_id: hostId, kind: 'omnipotent-agent', data: omnipotentSnapshot });
+    console.log(`[worker] OMNIPOTENT Agent: ${omnipotentSnapshot.process_count} process(es), ${omnipotentSnapshot.listening_ports.length} listening port(s) visible in this container's own namespace`);
+  }
 
   if (MDNS_SCAN_ENABLED && primarySegmentId) {
     await discoverMdnsResponders(primarySegmentId);
