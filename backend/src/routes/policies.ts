@@ -159,12 +159,13 @@ export async function policyRoutes(app: FastifyInstance) {
 
   // ---- Violations ----
   app.get('/violations', async (req) => {
-    const { status, severity, asset_type } = req.query as Record<string, string | undefined>;
+    const { status, severity, asset_type, asset_id } = req.query as Record<string, string | undefined>;
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (status) { params.push(status); clauses.push(`status = $${params.length}`); }
     if (severity) { params.push(severity); clauses.push(`severity = $${params.length}`); }
     if (asset_type) { params.push(asset_type); clauses.push(`asset_type = $${params.length}`); }
+    if (asset_id) { params.push(asset_id); clauses.push(`asset_id = $${params.length}`); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     return query(`SELECT * FROM policy_violations ${where} ORDER BY detected_at DESC`, params);
   });

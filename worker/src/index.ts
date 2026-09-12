@@ -60,8 +60,12 @@ const ICS_PORTS = new Set([502, 102, 4840, 47808]);
 // "windows-device" — port 445 alone is not evidence of Windows. Hostname
 // is a much stronger signal here (from NetBIOS/mDNS resolution) when it
 // matches a known NAS vendor/product naming pattern, so it's checked
-// first and overrides the port-based guess below.
-const NAS_HOSTNAME_PATTERN = /synology|qnap|nas[-_]|[-_]nas|zimaos|virtualdsm|truenas|freenas|unraid|diskstation|rackstation|openmediavault/i;
+// first and overrides the port-based guess below. Also matches bare
+// Synology model numbers (e.g. "DS923PLUS", "RS1817") since many devices
+// keep the factory-default hostname, which is just the model name with
+// no "synology"/"nas" substring to key off of.
+const NAS_HOSTNAME_PATTERN =
+  /synology|qnap|nas[-_]|[-_]nas|zimaos|virtualdsm|truenas|freenas|unraid|diskstation|rackstation|openmediavault|^ds\d{3,4}|^rs\d{3,4}/i;
 
 function inferDeviceRole(device: DiscoveredDevice, hostname: string): string {
   if (device.openPorts.some((p) => ICS_PORTS.has(p))) return 'ics-device';

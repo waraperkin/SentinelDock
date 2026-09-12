@@ -101,12 +101,21 @@ export interface SecretFinding {
   detected_at: string;
 }
 
+export interface ConfigSnapshot {
+  id: string;
+  asset_type: string;
+  asset_id: string;
+  kind: string;
+  data: Record<string, unknown>;
+  collected_at: string;
+}
+
 export interface WorkerNode {
   id: string;
   worker_id: string;
   hostname: string;
   is_leader: boolean;
-  last_cycle_summary: Record<string, number> | null;
+  last_cycle_summary: Record<string, unknown> | null;
   first_seen_at: string;
   last_heartbeat_at: string;
   online: boolean;

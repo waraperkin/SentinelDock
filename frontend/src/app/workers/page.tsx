@@ -8,6 +8,21 @@ function timeAgo(iso: string): string {
   return `${Math.floor(seconds / 3600)}h ago`;
 }
 
+/**
+ * last_cycle_summary is whatever the evaluation pipeline returned that
+ * cycle (see runDownstreamPipeline/evaluatePoliciesBySegment in the
+ * backend) — a flat map of counts for a plain evaluation, or including
+ * a `per_segment` array when the distributed engine ran. React cannot
+ * render an object/array directly as a child, so anything beyond a
+ * primitive is summarized instead of crashing the page.
+ */
+function summaryValueLabel(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 export default async function WorkersPage() {
   const nodes = await apiGet<WorkerNode[]>('/workers');
 
@@ -36,13 +51,31 @@ export default async function WorkersPage() {
             </div>
             <div className="mt-2 text-xs text-[var(--sd-text-muted)] sd-mono">worker_id: {node.worker_id}</div>
             {node.last_cycle_summary && (
-              <div className="mt-3 pt-3 border-t border-[var(--sd-border)] flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--sd-text-secondary)]">
-                {Object.entries(node.last_cycle_summary).map(([key, value]) => (
-                  <span key={key}>
-                    {key}: <span className="sd-mono text-[var(--sd-text-primary)]">{value}</span>
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="mt-3 pt-3 border-t border-[var(--sd-border)] flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--sd-text-secondary)]">
+                  {Object.entries(node.last_cycle_summary)
+                    .filter(([, value]) => !Array.isArray(value))
+                    .map(([key, value]) => (
+                      <span key={key}>
+                        {key}: <span className="sd-mono text-[var(--sd-text-primary)]">{summaryValueLabel(value)}</span>
+                      </span>
+                    ))}
+                </div>
+                {Array.isArray(node.last_cycle_summary.per_segment) && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(node.last_cycle_summary.per_segment as Array<{ segment_name: string; host_count: number; violations: number }>).map((seg) => (
+                      <span
+                        key={seg.segment_name}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] sd-mono bg-[var(--sd-surface-hover)] text-[var(--sd-text-secondary)]"
+                        title={`${seg.host_count} host(s)`}
+                      >
+                        {seg.segment_name}
+                        {seg.violations > 0 && <span className="text-[var(--sd-critical)] font-semibold">·{seg.violations}</span>}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         ))}

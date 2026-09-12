@@ -2,6 +2,7 @@ import { apiGet } from '@/lib/api';
 import type { Risk } from '@/types/models';
 import { SeverityBadge } from '@/components/SeverityBadge';
 import { RiskHeatmap } from '@/components/RiskHeatmap';
+import { AssetLink } from '@/components/AssetLink';
 
 export default async function RisksPage({ searchParams }: { searchParams: { severity?: string; category?: string } }) {
   const params = new URLSearchParams();
@@ -53,8 +54,8 @@ export default async function RisksPage({ searchParams }: { searchParams: { seve
         {risks.map((risk) => (
           <div key={risk.id} className="sd-panel p-5">
             <div className="flex items-center justify-between gap-4">
-              <div className="font-medium sd-mono text-sm text-[var(--sd-text-primary)]">
-                {risk.asset_type}:{risk.asset_id}
+              <div className="font-medium text-sm">
+                <AssetLink assetType={risk.asset_type} assetId={risk.asset_id} className="sd-mono text-[var(--sd-accent)] hover:underline" />
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <SeverityBadge severity={risk.severity} />

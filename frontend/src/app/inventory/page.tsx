@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { apiGet } from '@/lib/api';
 import type { Host, Container, ServiceRecord, NetworkSegment } from '@/types/models';
 import { DataTable } from '@/components/DataTable';
@@ -23,6 +24,9 @@ export default async function InventoryPage() {
     apiGet<NetworkSegment[]>('/assets/network'),
   ]);
 
+  const hostById = new Map(hosts.map((h) => [h.id, h]));
+  const containerById = new Map(containers.map((c) => [c.id, c]));
+
   return (
     <div>
       <div className="mb-8">
@@ -35,9 +39,9 @@ export default async function InventoryPage() {
         rows={hosts.map((h) => {
           const dc = DEVICE_CLASS_STYLE[h.device_class] ?? DEVICE_CLASS_STYLE.it;
           return [
-            <span key="h" className="sd-mono">
+            <Link key="h" href={`/inventory/hosts/${h.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
               {h.hostname}
-            </span>,
+            </Link>,
             <span key="dc" className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: dc.color, backgroundColor: dc.bg }}>
               {dc.label}
             </span>,
@@ -46,45 +50,65 @@ export default async function InventoryPage() {
             <span key="c" className={`font-medium ${CRITICALITY_COLOR[h.criticality] ?? ''}`}>
               {h.criticality}
             </span>,
-            <span key="ip" className="sd-mono text-[var(--sd-text-secondary)]">
+            <Link key="ip" href={`/inventory/hosts/${h.id}`} className="sd-mono text-[var(--sd-text-secondary)] hover:text-[var(--sd-accent)] hover:underline">
               {h.ip_address ?? '—'}
-            </span>,
+            </Link>,
           ];
         })}
       />
       <DataTable
         title={`Containers (${containers.length})`}
-        headers={['Name', 'Image', 'Status', 'Privileged']}
-        rows={containers.map((c) => [
-          c.name,
-          <span key="i" className="sd-mono text-[var(--sd-text-secondary)]">
-            {c.image}
-          </span>,
-          c.status,
-          c.privileged ? <span className="text-[var(--sd-critical)] font-medium">yes</span> : 'no',
-        ])}
+        headers={['Name', 'Host', 'Image', 'Status', 'Privileged']}
+        rows={containers.map((c) => {
+          const host = hostById.get(c.host_id);
+          return [
+            c.name,
+            host ? (
+              <Link key="h" href={`/inventory/hosts/${host.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
+                {host.hostname}
+              </Link>
+            ) : (
+              '—'
+            ),
+            <span key="i" className="sd-mono text-[var(--sd-text-secondary)]">
+              {c.image}
+            </span>,
+            c.status,
+            c.privileged ? <span className="text-[var(--sd-critical)] font-medium">yes</span> : 'no',
+          ];
+        })}
       />
       <DataTable
         title={`Services (${services.length})`}
-        headers={['Name', 'Port', 'Version', 'Bind Address', 'Exposed Publicly', 'Known CVEs']}
-        rows={services.map((s) => [
-          s.name,
-          <span key="p" className="sd-mono">
-            {s.port}
-          </span>,
-          s.version ?? '—',
-          <span key="b" className="sd-mono text-[var(--sd-text-secondary)]">
-            {s.bind_address}
-          </span>,
-          s.exposed_publicly ? <span className="text-[var(--sd-high)] font-medium">yes</span> : 'no',
-          s.cve_ids.length > 0 ? (
-            <span key="cve" className="sd-mono text-[var(--sd-critical)]">
-              {s.cve_ids.join(', ')}
-            </span>
-          ) : (
-            '—'
-          ),
-        ])}
+        headers={['Name', 'Host', 'Port', 'Version', 'Bind Address', 'Exposed Publicly', 'Known CVEs']}
+        rows={services.map((s) => {
+          const effectiveHost = s.host_id ? hostById.get(s.host_id) : s.container_id ? hostById.get(containerById.get(s.container_id)?.host_id ?? '') : undefined;
+          return [
+            s.name,
+            effectiveHost ? (
+              <Link key="h" href={`/inventory/hosts/${effectiveHost.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
+                {effectiveHost.hostname}
+              </Link>
+            ) : (
+              '—'
+            ),
+            <span key="p" className="sd-mono">
+              {s.port}
+            </span>,
+            s.version ?? '—',
+            <span key="b" className="sd-mono text-[var(--sd-text-secondary)]">
+              {s.bind_address}
+            </span>,
+            s.exposed_publicly ? <span className="text-[var(--sd-high)] font-medium">yes</span> : 'no',
+            s.cve_ids.length > 0 ? (
+              <span key="cve" className="sd-mono text-[var(--sd-critical)]">
+                {s.cve_ids.join(', ')}
+              </span>
+            ) : (
+              '—'
+            ),
+          ];
+        })}
       />
       <DataTable
         title={`Network Segments (${segments.length})`}

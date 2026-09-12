@@ -2,6 +2,7 @@ import { apiGet } from '@/lib/api';
 import type { Policy, PolicyViolation } from '@/types/models';
 import { SeverityBadge } from '@/components/SeverityBadge';
 import { ActionableList } from '@/components/ActionableList';
+import { AssetLink } from '@/components/AssetLink';
 
 const VIOLATION_STATUS_OPTIONS = [
   { value: 'acknowledged', label: 'Acknowledge' },
@@ -52,8 +53,8 @@ export default async function ViolationsPage() {
                       <SeverityBadge severity={v.severity} />
                       <span className="text-sm font-medium text-[var(--sd-text-primary)]">{policy?.name ?? 'Unknown policy'}</span>
                     </div>
-                    <p className="text-xs text-[var(--sd-text-muted)] sd-mono truncate">
-                      {v.asset_type}:{v.asset_id}
+                    <p className="text-xs truncate">
+                      <AssetLink assetType={v.asset_type} assetId={v.asset_id} className="sd-mono text-[var(--sd-accent)] hover:underline" />
                     </p>
                     {Object.keys(v.details).length > 0 && (
                       <p className="text-xs text-[var(--sd-text-muted)] mt-1 sd-mono truncate">{JSON.stringify(v.details)}</p>
