@@ -40,12 +40,14 @@ export default async function ViolationsPage() {
           pathPrefix="/violations"
           options={VIOLATION_STATUS_OPTIONS}
           hideWhenStatusLeaves="open"
+          searchPlaceholder="Search by policy, asset, detail…"
           emptyMessage="No open violations — every evaluated policy currently passes."
           initial={violations.map((v) => {
             const policy = policyById.get(v.policy_id);
             return {
               id: v.id,
               status: v.status,
+              searchText: `${policy?.name ?? ''} ${v.asset_type} ${v.asset_id} ${JSON.stringify(v.details)}`,
               content: (
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
