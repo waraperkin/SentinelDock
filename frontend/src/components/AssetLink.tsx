@@ -15,8 +15,15 @@ export function AssetLink({ assetType, assetId, className }: { assetType: string
       </Link>
     );
   }
+  // Strip color/hover cues from a passed className for the non-link case
+  // (nothing here is clickable), while still honoring layout utilities
+  // (margins, text size) the caller included alongside them.
+  const layoutOnly = className
+    ?.split(' ')
+    .filter((cls) => !/^(text-\[|hover:|text-accent)/.test(cls))
+    .join(' ');
   return (
-    <span className="sd-mono text-[var(--sd-text-primary)]">
+    <span className={`sd-mono text-[var(--sd-text-muted)] ${layoutOnly ?? ''}`}>
       {assetType}:{assetId}
     </span>
   );

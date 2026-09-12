@@ -1,6 +1,7 @@
 import { apiGet } from '@/lib/api';
 import type { SecretFinding } from '@/types/models';
 import { SeverityBadge } from '@/components/SeverityBadge';
+import { AssetLink } from '@/components/AssetLink';
 
 const KIND_LABEL: Record<string, string> = {
   aws_access_key: 'AWS access key',
@@ -27,12 +28,10 @@ export default async function SecretsPage() {
               <div className="font-medium text-[var(--sd-text-primary)]">{KIND_LABEL[finding.kind] ?? finding.kind}</div>
               <SeverityBadge severity={finding.severity} />
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[var(--sd-text-muted)] sd-mono">
-              <span>
-                {finding.asset_type}:{finding.asset_id}
-              </span>
+            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-[var(--sd-text-muted)]">
+              <AssetLink assetType={finding.asset_type} assetId={finding.asset_id} className="sd-mono text-[var(--sd-accent)] hover:underline" />
               <span>source: {finding.source}</span>
-              <span className="text-[var(--sd-critical)]">preview: {finding.match_preview}</span>
+              <span className="text-[var(--sd-critical)] sd-mono">preview: {finding.match_preview}</span>
             </div>
           </div>
         ))}

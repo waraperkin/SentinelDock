@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { apiGet } from '@/lib/api';
 import type { Host, Container, ServiceRecord, NetworkSegment } from '@/types/models';
 import { DataTable } from '@/components/DataTable';
+import { FilterableDataTable } from '@/components/FilterableDataTable';
 
 const CRITICALITY_COLOR: Record<string, string> = {
   low: 'text-[var(--sd-low)]',
@@ -33,27 +34,31 @@ export default async function InventoryPage() {
         <h1 className="text-[26px] font-display font-semibold text-[var(--sd-text-primary)]">Inventory</h1>
         <p className="mt-1 text-sm text-[var(--sd-text-secondary)]">Hosts, containers, services, and network segments discovered across your environment.</p>
       </div>
-      <DataTable
+      <FilterableDataTable
         title={`Hosts (${hosts.length})`}
+        placeholder="Filter by hostname, role, IP…"
         headers={['Hostname', 'Class', 'OS', 'Role', 'Criticality', 'IP']}
         rows={hosts.map((h) => {
           const dc = DEVICE_CLASS_STYLE[h.device_class] ?? DEVICE_CLASS_STYLE.it;
-          return [
-            <Link key="h" href={`/inventory/hosts/${h.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
-              {h.hostname}
-            </Link>,
-            <span key="dc" className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: dc.color, backgroundColor: dc.bg }}>
-              {dc.label}
-            </span>,
-            h.os ?? '—',
-            h.role,
-            <span key="c" className={`font-medium ${CRITICALITY_COLOR[h.criticality] ?? ''}`}>
-              {h.criticality}
-            </span>,
-            <Link key="ip" href={`/inventory/hosts/${h.id}`} className="sd-mono text-[var(--sd-text-secondary)] hover:text-[var(--sd-accent)] hover:underline">
-              {h.ip_address ?? '—'}
-            </Link>,
-          ];
+          return {
+            searchText: [h.hostname, h.device_class, h.os, h.role, h.criticality, h.ip_address].filter(Boolean).join(' '),
+            cells: [
+              <Link key="h" href={`/inventory/hosts/${h.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
+                {h.hostname}
+              </Link>,
+              <span key="dc" className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: dc.color, backgroundColor: dc.bg }}>
+                {dc.label}
+              </span>,
+              h.os ?? '—',
+              h.role,
+              <span key="c" className={`font-medium ${CRITICALITY_COLOR[h.criticality] ?? ''}`}>
+                {h.criticality}
+              </span>,
+              <Link key="ip" href={`/inventory/hosts/${h.id}`} className="sd-mono text-[var(--sd-text-secondary)] hover:text-[var(--sd-accent)] hover:underline">
+                {h.ip_address ?? '—'}
+              </Link>,
+            ],
+          };
         })}
       />
       <DataTable
@@ -78,36 +83,40 @@ export default async function InventoryPage() {
           ];
         })}
       />
-      <DataTable
+      <FilterableDataTable
         title={`Services (${services.length})`}
+        placeholder="Filter by name, host, port, CVE…"
         headers={['Name', 'Host', 'Port', 'Version', 'Bind Address', 'Exposed Publicly', 'Known CVEs']}
         rows={services.map((s) => {
           const effectiveHost = s.host_id ? hostById.get(s.host_id) : s.container_id ? hostById.get(containerById.get(s.container_id)?.host_id ?? '') : undefined;
-          return [
-            s.name,
-            effectiveHost ? (
-              <Link key="h" href={`/inventory/hosts/${effectiveHost.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
-                {effectiveHost.hostname}
-              </Link>
-            ) : (
-              '—'
-            ),
-            <span key="p" className="sd-mono">
-              {s.port}
-            </span>,
-            s.version ?? '—',
-            <span key="b" className="sd-mono text-[var(--sd-text-secondary)]">
-              {s.bind_address}
-            </span>,
-            s.exposed_publicly ? <span className="text-[var(--sd-high)] font-medium">yes</span> : 'no',
-            s.cve_ids.length > 0 ? (
-              <span key="cve" className="sd-mono text-[var(--sd-critical)]">
-                {s.cve_ids.join(', ')}
-              </span>
-            ) : (
-              '—'
-            ),
-          ];
+          return {
+            searchText: [s.name, effectiveHost?.hostname, String(s.port), s.version, s.bind_address, ...s.cve_ids].filter(Boolean).join(' '),
+            cells: [
+              s.name,
+              effectiveHost ? (
+                <Link key="h" href={`/inventory/hosts/${effectiveHost.id}`} className="sd-mono text-[var(--sd-accent)] hover:underline">
+                  {effectiveHost.hostname}
+                </Link>
+              ) : (
+                '—'
+              ),
+              <span key="p" className="sd-mono">
+                {s.port}
+              </span>,
+              s.version ?? '—',
+              <span key="b" className="sd-mono text-[var(--sd-text-secondary)]">
+                {s.bind_address}
+              </span>,
+              s.exposed_publicly ? <span className="text-[var(--sd-high)] font-medium">yes</span> : 'no',
+              s.cve_ids.length > 0 ? (
+                <span key="cve" className="sd-mono text-[var(--sd-critical)]">
+                  {s.cve_ids.join(', ')}
+                </span>
+              ) : (
+                '—'
+              ),
+            ],
+          };
         })}
       />
       <DataTable

@@ -15,6 +15,12 @@ function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+// Known Next.js 14 App Router quirk in self-hosted (`next start`) mode: a
+// notFound() call from a dynamic route with no-store data fetching still
+// renders the not-found.tsx UI correctly, but the HTTP status code stays
+// 200 instead of 404. Cosmetic only (irrelevant for an internal tool with
+// no public search indexing) — the content and navigation are correct.
+
 async function fetchHost(id: string): Promise<Host | null> {
   try {
     return await apiGet<Host>(`/assets/hosts/${id}`);

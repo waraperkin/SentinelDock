@@ -3,6 +3,7 @@ import { SeverityBadge } from '@/components/SeverityBadge';
 import { SandboxSimulator } from '@/components/SandboxSimulator';
 import { SimulationCampaignRunner } from '@/components/SimulationCampaignRunner';
 import { ActionableList } from '@/components/ActionableList';
+import { AssetLink } from '@/components/AssetLink';
 import type { AttackPath, CloudPosture, IcsPosture, XdrDetection, RemediationPlan, SimulationCampaign, QuantumTrend, QuantumOutlier } from '@/types/models';
 
 const REMEDIATION_STATUS_OPTIONS = [
@@ -93,13 +94,17 @@ export default async function GodmodePage() {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">XDR-lite — correlated detections</h2>
+          <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">
+            XDR-lite — correlated detections
+            {xdr.length > 10 && <span className="ml-2 text-xs font-normal text-[var(--sd-text-muted)]">showing 10 of {xdr.length}</span>}
+          </h2>
           <div className="sd-panel divide-y divide-[var(--sd-border)]">
-            {xdr.map((d) => (
+            {xdr.slice(0, 10).map((d) => (
               <div key={d.id} className="px-5 py-3">
                 <div className="flex items-center gap-2 mb-1">
                   <SeverityBadge severity={d.severity} />
                   <span className="text-xs text-[var(--sd-text-muted)]">score {d.composite_score}</span>
+                  <AssetLink assetType={d.asset_type} assetId={d.asset_id} className="sd-mono text-xs ml-auto" />
                 </div>
                 <p className="text-sm text-[var(--sd-text-primary)]">{d.summary}</p>
               </div>
@@ -109,7 +114,10 @@ export default async function GodmodePage() {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">Auto-Remediation — prioritized plans</h2>
+          <h2 className="text-sm font-semibold text-[var(--sd-text-primary)] mb-3">
+            Auto-Remediation — prioritized plans
+            {remediation.length > 10 && <span className="ml-2 text-xs font-normal text-[var(--sd-text-muted)]">showing 10 of {remediation.length}</span>}
+          </h2>
           <div className="sd-panel divide-y divide-[var(--sd-border)]">
             <ActionableList
               pathPrefix="/remediation/plans"
@@ -124,6 +132,7 @@ export default async function GodmodePage() {
                     <div className="flex items-center gap-2 mb-1">
                       <SeverityBadge severity={r.severity} />
                       <span className="text-xs text-[var(--sd-text-muted)]">priority {r.priority}</span>
+                      <AssetLink assetType={r.asset_type} assetId={r.asset_id} className="sd-mono text-xs ml-auto" />
                     </div>
                     <p className="text-sm text-[var(--sd-text-primary)]">{r.title}</p>
                     <ol className="mt-1.5 space-y-0.5">
